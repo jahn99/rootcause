@@ -8,6 +8,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://rootcause:rootcause@db:5432/rootcause
       PYTHONPATH: /app
+      FASTEMBED_CACHE_PATH: /app/data/fastembed_cache
+    volumes:
+      - ./data:/app/data
     depends_on:
       db:
         condition: service_healthy

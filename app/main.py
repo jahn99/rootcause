@@ -3,8 +3,10 @@
 from fastapi import FastAPI
 
 from app.config import get_settings
+from app.api.ask import router as ask_router
 
 app = FastAPI(title=get_settings().app_name)
+app.include_router(ask_router)
 
 
 @app.get("/health")
