@@ -119,6 +119,23 @@ tables, caps returned rows, and the executor applies a statement timeout and a
 read-only transaction. Retrieval plus SQL generation uses the configured
 provider through `llm/base.py`.
 
+## Slice 5: evidence-based 8D report draft
+
+Start the services and make sure the synthetic tables and NHTSA document store
+have been populated using the Slice 2 and Slice 3 commands above. Then submit an
+issue from PowerShell:
+
+```powershell
+docker compose up --build -d
+$body = @{ issue = "Door-seal defects are spiking on Line 3" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/investigate -ContentType "application/json" -Body $body
+```
+
+The workflow extracts available plant, line, part, and date details, gathers
+SQL and NHTSA evidence, then returns a validated 8D report draft. Root-cause
+hypotheses must cite gathered evidence. Reports include limitations and a human
+review note; unsupported conclusions are marked as insufficient evidence.
+
 ### Run tests
 
 ```powershell

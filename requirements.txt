@@ -11,3 +11,4 @@ fastembed==0.9.1
 pgvector==0.4.1
 rank-bm25==0.2.2
 sqlglot==30.33.0
+langgraph==1.2.24
