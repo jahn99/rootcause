@@ -136,6 +136,23 @@ SQL and NHTSA evidence, then returns a validated 8D report draft. Root-cause
 hypotheses must cite gathered evidence. Reports include limitations and a human
 review note; unsupported conclusions are marked as insufficient evidence.
 
+## Slice 6: evaluation
+
+Populate the synthetic and NHTSA data first, then run the saved evaluation set:
+
+```powershell
+docker compose run --rm app python scripts/run_eval.py
+```
+
+The script calls the same `/ask`, `/sql-agent`, and `/investigate` endpoint
+logic used by the API. It reports SQL number matches, document keyword scores
+(left unscored until `expected_keywords` are supplied), combined evidence
+coverage, and safety behavior. It also compares vector, BM25, and hybrid
+retrieval on all document questions. Full responses, scores, and the ablation
+results are written to `eval/results.json`. Set
+`EVAL_REQUEST_DELAY_SECONDS` to adjust the delay between provider calls; HTTP
+429 rate limits are retried with exponential backoff.
+
 ### Run tests
 
 ```powershell
