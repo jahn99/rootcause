@@ -1,11 +1,19 @@
 """Basic API and provider factory checks."""
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.llm.factory import create_llm_provider
 from app.llm.groq_provider import GroqProvider
 from app.main import app
+
+
+def test_docker_image_exposes_app_package_on_python_path() -> None:
+    dockerfile = Path(__file__).parents[1] / "Dockerfile"
+
+    assert "ENV PYTHONPATH=/app" in dockerfile.read_text(encoding="utf-8")
 
 
 def test_health_returns_ok() -> None:
