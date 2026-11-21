@@ -44,6 +44,23 @@ the provider reply. On failure it reports a safe hint without showing secrets.
 Groq retires models periodically. If the check reports that the model was
 rejected, verify `GROQ_MODEL` against the [Groq models list](https://console.groq.com/docs/models).
 
+## Slice 2: synthetic manufacturing data
+
+Generate (or reset and regenerate) the synthetic PostgreSQL tables with:
+
+```powershell
+docker compose run --rm app python scripts/generate_data.py
+```
+
+The script creates `production_defects` and `downtime_events`, then replaces
+their contents with reproducible data spanning January 1 through June 30, 2025.
+It uses seed `2025`, so each run produces the same rows and IDs.
+
+There is exactly one deliberately injected defect spike: Cedar Falls, Line 3,
+door seal part, `seal gap` defects from May 5 through May 18, 2025. Daily spike
+counts rise from 3 to 16, with higher severity and one related downtime event
+per day for door-seal rework during containment.
+
 ### Run tests
 
 ```powershell
