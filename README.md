@@ -30,6 +30,18 @@ docker compose up --build
 The API listens on port 8000 and Postgres with pgvector listens on port 5432.
 The health endpoint does not call the LLM or database.
 
+### Check the configured LLM with Docker Compose
+
+With `GROQ_API_KEY` set in `.env`, run this in another PowerShell window while
+the Compose services are available:
+
+```powershell
+docker compose run --rm app python scripts/check_llm.py
+```
+
+The script uses the same LLM provider factory as the application and prints
+the provider reply. On failure it reports a safe hint without showing secrets.
+
 ### Run tests
 
 ```powershell
