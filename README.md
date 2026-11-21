@@ -41,6 +41,8 @@ docker compose run --rm app python scripts/check_llm.py
 
 The script uses the same LLM provider factory as the application and prints
 the provider reply. On failure it reports a safe hint without showing secrets.
+Groq retires models periodically. If the check reports that the model was
+rejected, verify `GROQ_MODEL` against the [Groq models list](https://console.groq.com/docs/models).
 
 ### Run tests
 

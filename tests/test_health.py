@@ -12,8 +12,10 @@ from app.main import app
 
 def test_docker_image_exposes_app_package_on_python_path() -> None:
     dockerfile = Path(__file__).parents[1] / "Dockerfile"
+    compose_file = Path(__file__).parents[1] / "docker-compose.yml"
 
     assert "ENV PYTHONPATH=/app" in dockerfile.read_text(encoding="utf-8")
+    assert "PYTHONPATH: /app" in compose_file.read_text(encoding="utf-8")
 
 
 def test_health_returns_ok() -> None:

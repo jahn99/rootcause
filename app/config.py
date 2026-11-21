@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     app_name: str = "RootCause"
     llm_provider: str = "groq"
     groq_api_key: str | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-20b"
     database_url: str = "postgresql+psycopg://rootcause:rootcause@db:5432/rootcause"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
