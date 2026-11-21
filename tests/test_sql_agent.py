@@ -76,6 +76,58 @@ def test_comment_markers_inside_string_literals_are_not_comments() -> None:
     assert "LIMIT 100" in query
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT COUNT(*) FROM production_defects",
+        "SELECT SUM(minutes) FROM downtime_events",
+        "SELECT AVG(severity) FROM production_defects",
+        "SELECT MIN(severity), MAX(severity) FROM production_defects",
+        "SELECT ROUND(AVG(severity), 2) FROM production_defects",
+        "SELECT COALESCE(NULLIF(COUNT(*), 0), 0) FROM production_defects",
+        "SELECT CAST(severity AS integer) FROM production_defects",
+        "SELECT EXTRACT(YEAR FROM date) FROM production_defects",
+        "SELECT DATE_TRUNC('year', date) FROM production_defects",
+        "SELECT LOWER(plant), UPPER(plant), ABS(severity) FROM production_defects",
+        "SELECT COUNT(*) FROM production_defects WHERE date >= DATE '2025-01-01' AND date < DATE '2026-01-01'",
+        "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects "
+        "WHERE date >= DATE '2025-01-01' AND date < DATE '2026-01-01' "
+        "GROUP BY plant, line ORDER BY defect_count DESC",
+    ],
+)
+def test_validator_allows_safe_aggregate_and_date_queries(query: str) -> None:
+    assert validate_sql(query)
+
+
+@pytest.mark.parametrize(
+    ("function", "query"),
+    [
+        ("pg_read_file", "SELECT pg_read_file('/etc/passwd') FROM production_defects"),
+        ("pg_sleep", "SELECT pg_sleep(1) FROM production_defects"),
+        ("set_config", "SELECT set_config('role', 'root', true) FROM production_defects"),
+        ("dblink", "SELECT dblink('host=localhost', 'SELECT 1') FROM production_defects"),
+        ("lo_import", "SELECT lo_import('/tmp/file') FROM production_defects"),
+        ("inet_client_addr", "SELECT inet_client_addr() FROM production_defects"),
+    ],
+)
+def test_validator_names_and_rejects_dangerous_functions(function: str, query: str) -> None:
+    with pytest.raises(SQLValidationError, match=rf"function '{function}' is not allowed"):
+        validate_sql(query)
+
+
+def test_failing_plant_line_question_sql_passes_validation() -> None:
+    likely_generated_sql = (
+        "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects "
+        "WHERE date >= DATE '2025-01-01' AND date < DATE '2026-01-01' "
+        "GROUP BY plant, line ORDER BY defect_count DESC"
+    )
+
+    validated = validate_sql(likely_generated_sql)
+
+    assert "COUNT(*)" in validated
+    assert "LIMIT 100" in validated
+
+
 class FakeLLM:
     def __init__(self, generated_sql: str = "SELECT COUNT(*) AS count FROM production_defects") -> None:
         self.generated_sql = generated_sql

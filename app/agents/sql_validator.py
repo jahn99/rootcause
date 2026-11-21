@@ -9,8 +9,8 @@ ALLOWED_TABLE_COLUMNS = {
     "downtime_events": {"id", "plant", "line", "reason", "minutes", "date"},
 }
 ALLOWED_FUNCTIONS = {
-    "ABS", "AVG", "COALESCE", "COUNT", "DATE_TRUNC", "EXTRACT", "LOWER",
-    "MAX", "MIN", "ROUND", "SUM", "TIMESTAMP_TRUNC", "UPPER",
+    "ABS", "AVG", "CAST", "COALESCE", "COUNT", "DATE_TRUNC", "EXTRACT", "LOWER",
+    "MAX", "MIN", "NULLIF", "ROUND", "SUM", "UPPER",
 }
 FORBIDDEN_EXPRESSIONS = (
     exp.Alter,
@@ -100,8 +100,14 @@ def validate_sql(sql: str, row_limit: int = 100) -> str:
     for node in expression.walk():
         if isinstance(node, FORBIDDEN_EXPRESSIONS):
             raise SQLValidationError("The statement contains a forbidden operation")
-        if isinstance(node, exp.Func) and node.sql_name().upper() not in ALLOWED_FUNCTIONS:
-            raise SQLValidationError("The query uses a function outside the safe allow-list")
+        if isinstance(node, exp.Func) and not isinstance(node, exp.Binary):
+            function_name = node.name if isinstance(node, exp.Anonymous) else node.sql_name()
+            function_name = function_name.upper()
+            # SQLGlot models PostgreSQL DATE_TRUNC as TimestampTrunc internally.
+            if function_name == "TIMESTAMP_TRUNC":
+                function_name = "DATE_TRUNC"
+            if function_name not in ALLOWED_FUNCTIONS:
+                raise SQLValidationError(f"function '{function_name.lower()}' is not allowed")
 
     tables = list(expression.find_all(exp.Table))
     if not tables:
