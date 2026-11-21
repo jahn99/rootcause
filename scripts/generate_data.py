@@ -10,7 +10,9 @@ from sqlalchemy import Engine, delete
 from sqlalchemy.orm import Session
 
 from app.db.models import Base, DowntimeEvent, ProductionDefect
+from app.db.readonly_role import ensure_readonly_role
 from app.db.session import create_database_engine
+from app.config import get_settings
 
 SEED = 2025
 START_DATE = date(2025, 1, 1)
@@ -133,7 +135,9 @@ def main() -> None:
     engine = create_database_engine()
     try:
         defect_count, downtime_count = populate_database(engine)
+        ensure_readonly_role(engine, get_settings().readonly_db_password)
         print(f"Loaded {defect_count} production defects and {downtime_count} downtime events.")
+        print("Provisioned the SELECT-only rootcause_readonly role for the two synthetic tables.")
         print(
             f"Injected door-seal spike: {SPIKE_PLANT}, Line {SPIKE_LINE}, {SPIKE_PART}, "
             f"{SPIKE_START} through {SPIKE_END}."

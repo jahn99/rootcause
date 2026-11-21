@@ -1,0 +1,142 @@
+"""Read-only natural-language data agent backed by validated SQL."""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
+
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import Engine, inspect, text
+
+from app.db.readonly_role import ALLOWED_TABLES, READONLY_ROLE
+from app.llm.base import LLMProvider
+from app.agents.sql_validator import validate_sql
+
+SQL_OUTPUT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {"sql": {"type": "string"}},
+    "required": ["sql"],
+    "additionalProperties": False,
+}
+
+
+class GeneratedSQL(BaseModel):
+    """Validated JSON payload requested from the LLM."""
+
+    sql: str
+
+
+class DataAgentResult(BaseModel):
+    """Final SQL-agent output for the HTTP endpoint."""
+
+    sql: str | None
+    rows: list[dict[str, Any]]
+    answer: str
+    refused: bool = False
+
+
+class UnsafeQuestion(ValueError):
+    """Raised only by the intent check for modifying or credential requests."""
+
+
+def refusal_reason(question: str) -> str | None:
+    """Detect direct write requests and attempts to retrieve secrets."""
+    normalized = " ".join(question.lower().split())
+    if any(term in normalized for term in ("password", "api key", "secret", "credentials", ".env")):
+        return "credentials"
+    if re.search(r"\b(delete|drop|insert|update|alter|create|truncate|grant|revoke|modify|write|remove)\b", normalized):
+        return "modification"
+    return None
+
+
+def get_table_schema(engine: Engine) -> str:
+    """Read column names and types for only the two approved tables."""
+    inspector = inspect(engine)
+    descriptions: list[str] = []
+    for table in ALLOWED_TABLES:
+        columns = inspector.get_columns(table, schema="public")
+        if not columns:
+            raise RuntimeError(f"Required table is unavailable: {table}")
+        column_text = ", ".join(f"{column['name']} {column['type']}" for column in columns)
+        descriptions.append(f"public.{table}({column_text})")
+    return "\n".join(descriptions)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def execute_readonly_sql(engine: Engine, query: str, timeout_ms: int) -> list[dict[str, Any]]:
+    """Run one already-validated SQL statement in a read-only timed transaction."""
+    with engine.connect() as connection, connection.begin():
+        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+        connection.exec_driver_sql(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'")
+        result = connection.execute(text(query))
+        return [
+            {str(key): _json_safe(value) for key, value in row._mapping.items()}
+            for row in result.fetchall()
+        ]
+
+
+class DataAgent:
+    """Generate SQL from a question, validate it, execute safely, and summarize rows."""
+
+    def __init__(
+        self,
+        llm: LLMProvider,
+        engine: Engine,
+        row_limit: int = 100,
+        timeout_ms: int = 3000,
+    ) -> None:
+        if engine.url.username != READONLY_ROLE:
+            raise ValueError(f"SQL agent must use the {READONLY_ROLE} database role")
+        self.llm = llm
+        self.engine = engine
+        self.row_limit = row_limit
+        self.timeout_ms = timeout_ms
+
+    async def ask(self, question: str) -> DataAgentResult:
+        """Answer a data question while refusing writes and credential requests."""
+        intent = refusal_reason(question)
+        if intent:
+            return DataAgentResult(
+                sql=None,
+                rows=[],
+                answer="Sorry, I can’t modify database records or disclose credentials.",
+                refused=True,
+            )
+
+        schema = get_table_schema(self.engine)
+        generation_prompt = (
+            "Produce one PostgreSQL SELECT query as JSON using the supplied schema. "
+            "Use only the listed tables and columns. Do not use comments, CTEs, "
+            "functions outside ordinary aggregation, or any write operation. "
+            "The query will be independently validated and run with a row cap. "
+            "Return only an object with a single string property named sql.\n\n"
+            f"Schema:\n{schema}\n\nQuestion: {question}"
+        )
+        raw = await self.llm.generate_json(generation_prompt, SQL_OUTPUT_SCHEMA)
+        try:
+            generated = GeneratedSQL.model_validate(json.loads(raw))
+        except (json.JSONDecodeError, ValidationError) as error:
+            raise ValueError("The SQL agent could not produce a valid SQL query.") from error
+
+        safe_sql = validate_sql(generated.sql, row_limit=self.row_limit)
+        rows = execute_readonly_sql(self.engine, safe_sql, timeout_ms=self.timeout_ms)
+        answer_prompt = (
+            "Answer the user's database question in one short plain-language sentence. "
+            "Use only the query result JSON. If it is empty, say no records were found. "
+            "Do not reveal credentials or invent values.\n\n"
+            f"Question: {question}\nSQL: {safe_sql}\nRows: {json.dumps(rows, default=str)}"
+        )
+        answer = await self.llm.generate(answer_prompt)
+        return DataAgentResult(sql=safe_sql, rows=rows, answer=answer.strip(), refused=False)

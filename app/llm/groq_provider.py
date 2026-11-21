@@ -23,3 +23,16 @@ class GroqProvider(LLMProvider):
         )
         content = completion.choices[0].message.content
         return content or ""
+
+    async def generate_json(self, prompt: str, schema: dict[str, object]) -> str:
+        """Use Groq JSON-schema output mode and return its JSON response."""
+        completion = await self._client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "data_agent_sql", "strict": True, "schema": schema},
+            },
+        )
+        content = completion.choices[0].message.content
+        return content or ""

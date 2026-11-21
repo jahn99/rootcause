@@ -92,6 +92,33 @@ Choose `RETRIEVAL_MODE=hybrid`, `bm25`, or `vector` in `.env` to compare search
 modes. Hybrid retrieval merges BM25 and pgvector rankings with reciprocal rank
 fusion. The local embedding model is CPU-based and does not need an API key.
 
+## Slice 4: guarded SQL data agent
+
+Regenerate the synthetic data once to create/reset the `rootcause_readonly`
+database role and grant it `SELECT` on only `production_defects` and
+`downtime_events`:
+
+```powershell
+docker compose run --rm app python scripts/generate_data.py
+```
+
+Set `READONLY_DB_PASSWORD` and the matching `READONLY_DATABASE_URL` in `.env`
+if you change the example read-only password. The data agent uses that
+read-only URL; it does not use the app's admin database connection.
+
+Ask a manufacturing data question:
+
+```powershell
+$body = @{ question = "Which plant and line had the most defects in 2025?" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/sql-agent -ContentType "application/json" -Body $body
+```
+
+The endpoint returns the validated SQL, result rows, and a short answer. The
+validator parses PostgreSQL SQL, allows only one `SELECT` over the two approved
+tables, caps returned rows, and the executor applies a statement timeout and a
+read-only transaction. Retrieval plus SQL generation uses the configured
+provider through `llm/base.py`.
+
 ### Run tests
 
 ```powershell

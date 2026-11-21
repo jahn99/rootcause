@@ -7,6 +7,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+psycopg://rootcause:rootcause@db:5432/rootcause
+      READONLY_DATABASE_URL: postgresql+psycopg://rootcause_readonly:${READONLY_DB_PASSWORD:-rootcause_readonly}@db:5432/rootcause
       PYTHONPATH: /app
       FASTEMBED_CACHE_PATH: /app/data/fastembed_cache
     volumes:
