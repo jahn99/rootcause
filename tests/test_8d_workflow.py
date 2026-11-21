@@ -59,9 +59,11 @@ def report_payload(**overrides: object) -> dict[str, object]:
 class FakeDataAgent:
     def __init__(self) -> None:
         self.question = ""
+        self.questions: list[str] = []
 
     async def ask(self, question: str) -> DataAgentResult:
         self.question = question
+        self.questions.append(question)
         return DataAgentResult(
             sql="SELECT COUNT(*) AS count FROM production_defects LIMIT 100",
             rows=[{"count": 5}],
@@ -72,7 +74,21 @@ class FakeDataAgent:
 class FakeChunk:
     source_type = "complaint"
     source_id = "123"
-    content = "Owner reported a door seal issue."
+    content = "Owner reported a door seal issue with wind noise."
+    record_date = date(2024, 5, 1)
+
+
+class IrrelevantLockChunk:
+    source_type = "complaint"
+    source_id = "lock-1"
+    content = "Door lock actuator clicks and fails to unlock."
+    record_date = date(2024, 5, 1)
+
+
+class IrrelevantWiringChunk:
+    source_type = "complaint"
+    source_id = "wiring-1"
+    content = "Camera wiring intermittently loses power."
     record_date = date(2024, 5, 1)
 
 
@@ -82,7 +98,7 @@ class FakeRetriever:
 
     def retrieve(self, query: str, top_k: int = 5) -> list[FakeChunk]:
         self.query = query
-        return [FakeChunk()]
+        return [FakeChunk(), IrrelevantLockChunk(), IrrelevantWiringChunk()]
 
 
 class FakeLLM:
@@ -151,13 +167,65 @@ def test_workflow_gathers_both_sources_and_uses_only_evidence() -> None:
     workflow, data_agent, retriever, llm = build_workflow()
     report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
 
-    assert "part=door seal" in data_agent.question
-    assert "line=3" in retriever.query
+    assert "part door seal" in data_agent.question
+    assert "line 3" in retriever.query
     assert report.supporting_data[0].id == "sql:1"
     assert report.supporting_documents[0].id == "complaint:123"
     assert report.root_cause_hypotheses[0].evidence == ["sql:1", "complaint:123"]
     assert "ONLY the gathered evidence" in llm.prompts[0]
     assert "Do not invent causes" in llm.prompts[0]
+
+
+def test_workflow_without_plant_or_dates_runs_part_overviews() -> None:
+    workflow, data_agent, retriever, _ = build_workflow()
+    report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
+
+    assert len(data_agent.questions) == 4
+    assert any("grouped by plant and line" in item for item in data_agent.questions)
+    assert any("weekly defect counts" in item for item in data_agent.questions)
+    assert any("average severity" in item for item in data_agent.questions)
+    assert any("downtime minutes" in item for item in data_agent.questions)
+    assert "door seal weatherstrip water leak wind noise" in retriever.query
+    assert len(report.supporting_data) == 4
+    assert report.supporting_documents[0].id == "complaint:123"
+
+
+def test_month_only_triage_and_investigation_input() -> None:
+    workflow, data_agent, retriever, _ = build_workflow()
+    issue = "Door-seal defects are spiking on Line 3 at Cedar Falls in May 2025"
+    triage = triage_issue(issue)
+    report = asyncio.run(workflow.run(issue))
+
+    assert triage.plant == "Cedar Falls"
+    assert triage.start_date == date(2025, 5, 1)
+    assert triage.end_date == date(2025, 5, 31)
+    assert len(data_agent.questions) >= 1
+    assert "start_date=2025-05-01" in data_agent.question
+    assert "end_date=2025-05-31" in data_agent.question
+    assert "door seal weatherstrip water leak wind noise" in retriever.query
+    assert report.supporting_data
+
+
+def test_no_results_are_reported_as_limitations() -> None:
+    class EmptyDataAgent:
+        async def ask(self, question: str) -> DataAgentResult:
+            return DataAgentResult(sql="SELECT COUNT(*) FROM production_defects", rows=[], answer="No records.")
+
+    class EmptyRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[FakeChunk]:
+            return []
+
+    draft = sample_draft()
+    draft["root_cause_hypotheses"] = []
+    draft["limitations"] = []
+    workflow = InvestigationWorkflow(
+        EmptyDataAgent(), EmptyRetriever(), FakeLLM([json.dumps(draft)])  # type: ignore[arg-type]
+    )
+    report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
+
+    assert not report.supporting_data or not any(item.rows for item in report.supporting_data)
+    assert any("no manufacturing data rows" in item.lower() for item in report.limitations)
+    assert any("insufficient evidence" in item.lower() for item in report.limitations)
 
 
 def test_report_validation_retries_once_then_returns_validated_report() -> None:
@@ -196,3 +264,39 @@ def test_investigate_endpoint_end_to_end_with_fake_agents_and_llm() -> None:
     assert body["supporting_data"][0]["rows"] == [{"count": 5}]
     assert body["supporting_documents"][0]["id"] == "complaint:123"
     assert body["human_review_note"] == "Draft for human review."
+
+
+def test_investigate_unexpected_error_returns_clear_json() -> None:
+    class BrokenWorkflow:
+        async def run(self, issue: str) -> EightDReport:
+            raise RuntimeError("simulated unexpected failure")
+
+    app.dependency_overrides[get_investigation_workflow] = lambda: BrokenWorkflow()
+    try:
+        response = TestClient(app).post(
+            "/investigate", json={"issue": "Door-seal defects at Cedar Falls in May 2025"}
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Investigation failed unexpectedly. The error was logged; please retry."
+    }
+
+
+def test_investigate_provider_context_error_returns_clear_json() -> None:
+    class LargeContextWorkflow:
+        async def run(self, issue: str) -> EightDReport:
+            raise RuntimeError("Error 413: request too large for model")
+
+    app.dependency_overrides[get_investigation_workflow] = lambda: LargeContextWorkflow()
+    try:
+        response = TestClient(app).post(
+            "/investigate", json={"issue": "Door-seal defects at Cedar Falls in May 2025"}
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 502
+    assert "could not process the report context" in response.json()["detail"]

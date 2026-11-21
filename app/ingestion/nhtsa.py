@@ -23,6 +23,8 @@ VEHICLES = (
 TOPIC_TERMS = (
     "door", "seal", "brake", "airbag", "air bag", "fuel", "steer",
     "electrical", "electric", "wiring", "battery", "short circuit",
+    "weatherstrip", "weather strip", "water leak", "water leaks", "water intrusion",
+    "water entering", "wind noise", "seal gap",
 )
 SOURCE_ENDPOINTS = {
     "recall": "/recalls/recallsByVehicle",

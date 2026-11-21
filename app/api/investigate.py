@@ -1,6 +1,7 @@
 """HTTP endpoint for generating validated evidence-linked 8D report drafts."""
 
 from functools import lru_cache
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -13,6 +14,7 @@ from app.reports.schema import EightDReport
 from app.reports.workflow import InvestigationWorkflow, ReportValidationError
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class InvestigateRequest(BaseModel):
@@ -46,3 +48,20 @@ async def investigate(
         return await workflow.run(request.issue)
     except ReportValidationError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("Unexpected error while investigating issue")
+        error_text = str(error).casefold()
+        if any(term in error_text for term in ("request too large", "context length", "tokens per minute", "413")):
+            raise HTTPException(
+                status_code=502,
+                detail="The LLM provider could not process the report context. Try again with a narrower issue.",
+            ) from error
+        if "429" in error_text or "rate limit" in error_text:
+            raise HTTPException(
+                status_code=503,
+                detail="The LLM provider is rate limited. Please retry shortly.",
+            ) from error
+        raise HTTPException(
+            status_code=500,
+            detail="Investigation failed unexpectedly. The error was logged; please retry.",
+        ) from error

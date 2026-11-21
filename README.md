@@ -77,7 +77,13 @@ Toyota Camry, Honda Accord, and Mercedes-Benz C-Class (2021 model year). It
 queries NHTSA's documented [recalls-by-vehicle](https://www.nhtsa.gov/nhtsa-datasets-and-apis)
 and [complaints-by-vehicle](https://www.nhtsa.gov/nhtsa-datasets-and-apis) REST
 endpoints and focuses on door/seal, brakes, airbags, fuel, steering, and
-electrical terms.
+electrical terms, including weatherstrip, water leaks, and wind noise for
+door-seal investigations. Re-run ingestion after upgrading the code to
+reprocess cached public API responses against the expanded terms:
+
+```powershell
+docker compose run --rm app python scripts/ingest.py
+```
 
 After ingestion, ask a question from PowerShell:
 
