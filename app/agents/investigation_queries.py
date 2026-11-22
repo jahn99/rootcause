@@ -96,9 +96,16 @@ def _date_filter(context: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
 def _template_queries(context: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
     """Build fixed query text and bound parameter dictionaries from triage values."""
     part = context.get("part")
-    if not part:
-        return []
     dates, date_params = _date_filter(context)
+    if not part:
+        if not context.get("top_part_query"):
+            return []
+        top_parts_sql = (
+            "SELECT part, COUNT(*) AS defect_count FROM production_defects"
+            + (" WHERE " + " AND ".join(dates) if dates else "")
+            + " GROUP BY part ORDER BY defect_count DESC, part"
+        )
+        return [("top_parts", top_parts_sql, dict(date_params))]
 
     weekly_filters = ["LOWER(part) = LOWER(:part)"]
     weekly_params: dict[str, Any] = {"part": part, **date_params}

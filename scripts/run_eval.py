@@ -8,26 +8,41 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from fastapi.testclient import TestClient  # noqa: E402
-
 from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
+from eval.scoring import (  # noqa: E402
+    combined_score,
+    keyword_score,
+    safety_score,
+    sql_expected_values_match,
+    sql_number_match,
+)
 
-from app.api.ask import get_retriever  # noqa: E402
-from app.config import get_settings  # noqa: E402
-from app.db.session import create_database_engine  # noqa: E402
-from app.main import app  # noqa: E402
-from app.retrieval.search import HybridRetriever  # noqa: E402
-from eval.scoring import combined_score, keyword_score, safety_score, sql_number_match  # noqa: E402
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient  # noqa: E402
 
 QUESTION_PATH = ROOT / "eval" / "questions.json"
 RESULT_PATH = ROOT / "eval" / "results.json"
+FAILURE_REPORT_PATH = ROOT / "eval" / "failure_report.md"
 RETRIEVAL_MODES = ("vector", "bm25", "hybrid")
+
+
+def _runtime_dependencies() -> tuple[Any, Any, Any, Any, Any, Any]:
+    """Load app runtime lazily so offline report generation never loads .env."""
+    from fastapi.testclient import TestClient
+
+    from app.api.ask import get_retriever
+    from app.config import get_settings
+    from app.db.session import create_database_engine
+    from app.main import app
+    from app.retrieval.search import HybridRetriever
+
+    return TestClient, app, get_retriever, get_settings, create_database_engine, HybridRetriever
 
 
 def _check(question: dict[str, Any]) -> dict[str, Any]:
@@ -92,6 +107,8 @@ def _score(question: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]
     if category == "doc":
         return keyword_score(response.get("answer", ""), response.get("sources", []), check.get("expected_keywords", []))
     if category == "sql":
+        if "expected_values" in check:
+            return sql_expected_values_match(check["expected_values"], response.get("rows", []))
         return sql_number_match(check.get("expected_answer", ""), response.get("rows", []))
     if category == "combined":
         return combined_score(response)
@@ -147,6 +164,133 @@ def _write_results(rows: list[dict[str, Any]], ablation: dict[str, dict[str, Any
     temporary_path.replace(RESULT_PATH)
 
 
+def _row_failed(row: dict[str, Any]) -> bool:
+    """Return whether a stored question result failed its category's check."""
+    if row.get("status") == "error":
+        return True
+    score = row.get("score", {})
+    if score.get("status") == "error":
+        return True
+    if "number_match" in score:
+        return not score["number_match"]
+    if "keyword_hit_rate" in score:
+        return score["keyword_hit_rate"] < 1.0
+    if "combined_match" in score:
+        return not score["combined_match"]
+    if "behavior_match" in score:
+        return not score["behavior_match"]
+    return False
+
+
+def _failure_reason(row: dict[str, Any]) -> str:
+    """Explain the exact failed predicate recorded by the scorer."""
+    if row.get("status") == "error":
+        return f"Request errored: {row.get('error', 'unspecified error')}"
+    score = row.get("score", {})
+    if "number_match" in score:
+        return f"Expected SQL values missing from returned rows: {score.get('missing_numbers', [])}."
+    if "keyword_hit_rate" in score:
+        return (
+            f"Answer keyword hit rate was {score.get('keyword_hit_rate', 0):.0%}; "
+            f"matched {score.get('matched_keywords', [])}. Cited-source keyword hit: "
+            f"{score.get('source_keyword_hit', False)}."
+        )
+    if "combined_match" in score:
+        return (
+            f"Combined check requires data and citations; data evidence="
+            f"{score.get('has_data_evidence', False)}, document citations="
+            f"{score.get('has_document_citations', False)}."
+        )
+    if "behavior_match" in score:
+        return "Expected safety behavior was not observed."
+    return "Scorer marked this result as failed without a category detail."
+
+
+def _actual_response(row: dict[str, Any]) -> str:
+    """Format the response fields relevant to auditing a failure."""
+    if row.get("status") == "error":
+        return f"Error: {row.get('error', 'unknown error')}"
+    response = row.get("response", {})
+    parts: list[str] = []
+    if response.get("answer") is not None:
+        parts.append(f"Answer: {response['answer']}")
+    if response.get("sql") is not None:
+        parts.append(f"SQL: {response['sql']}")
+    if response.get("rows") is not None:
+        parts.append(f"Rows: {json.dumps(response['rows'], ensure_ascii=False, default=str)}")
+    if response.get("sources") is not None:
+        sources = [
+            {"id": item.get("id"), "snippet": str(item.get("snippet", ""))[:500]}
+            for item in response["sources"]
+            if isinstance(item, dict)
+        ]
+        parts.append(
+            "Cited sources: "
+            + json.dumps(sources, ensure_ascii=False, default=str)
+        )
+    report_parts = []
+    for key in ("problem_description", "root_cause_hypotheses", "limitations"):
+        if response.get(key):
+            report_parts.append(f"{key}: {json.dumps(response[key], ensure_ascii=False, default=str)}")
+    for key in ("supporting_data", "supporting_documents"):
+        if response.get(key) is not None:
+            report_parts.append(
+                f"{key}: {json.dumps(response[key], ensure_ascii=False, default=str)}"
+            )
+    if report_parts:
+        parts.append("Report summary: " + "\n".join(report_parts))
+    return "\n".join(parts) or "No response payload was saved."
+
+
+def _render_failure_report(
+    rows: list[dict[str, Any]], questions: list[dict[str, Any]]
+) -> str:
+    """Create a Markdown audit of every failed or errored evaluation question."""
+    question_by_id = {item["id"]: item for item in questions}
+    failures = [row for row in rows if _row_failed(row)]
+    lines = [
+        "# Evaluation failure report",
+        "",
+        "For document questions, answer keyword hit rate measures keywords in the answer only. "
+        "The cited-source keyword result is reported separately and does not raise the answer score.",
+        "",
+        f"Failed questions: {len(failures)}",
+        "",
+    ]
+    if not failures:
+        lines.append("No failed or errored questions.")
+    for row in failures:
+        question = question_by_id.get(row["id"], {})
+        check = _check(question)
+        expected = {
+            key: value
+            for key, value in check.items()
+            if key in {"expected_values", "expected_answer", "expected_keywords", "expected_behavior"}
+        }
+        lines.extend(
+            [
+                f"## {row['id']} ({row.get('category', question.get('category', 'unknown'))})",
+                "",
+                f"**Question:** {question.get('question', '(question text unavailable)')}",
+                "",
+                f"**Actual response:**\n\n```text\n{_actual_response(row)}\n```",
+                "",
+                f"**Expected value:** `{json.dumps(expected, ensure_ascii=False)}`",
+                "",
+                f"**Why it failed:** {_failure_reason(row)}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _write_failure_report(rows: list[dict[str, Any]], questions: list[dict[str, Any]]) -> None:
+    FAILURE_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    FAILURE_REPORT_PATH.write_text(
+        _render_failure_report(rows, questions), encoding="utf-8"
+    )
+
+
 def _print_table(rows: list[dict[str, Any]], title: str) -> None:
     print(f"\n{title}")
     print(f"{'ID':<5} {'CATEGORY':<9} {'SCORE':<28} {'DETAIL'}")
@@ -159,14 +303,15 @@ def _print_table(rows: list[dict[str, Any]], title: str) -> None:
         if score.get("status") == "unscored":
             label = "unscored"
         elif "keyword_hit_rate" in score:
-            label = f"{score['keyword_hit_rate']:.0%} keywords"
+            source_label = "yes" if score.get("source_keyword_hit") else "no"
+            label = f"answer {score['keyword_hit_rate']:.0%}; sources {source_label}"
         elif "number_match" in score:
             label = "pass" if score["number_match"] else "fail"
         elif "combined_match" in score:
             label = "pass" if score["combined_match"] else "fail"
         else:
             label = "pass" if score.get("behavior_match") else "fail"
-        detail = str(score.get("source_keyword_hit", score.get("missing_numbers", score.get("has_document_citations", ""))))
+        detail = str(score.get("missing_numbers", score.get("has_document_citations", "")))
         print(f"{row['id']:<5} {row['category']:<9} {label:<28} {detail}")
 
 
@@ -178,15 +323,38 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip questions and retrieval comparisons already completed in eval/results.json.",
     )
+    parser.add_argument(
+        "--rerun-failed",
+        action="store_true",
+        help="Rerun failed or errored questions from eval/results.json and keep passed results.",
+    )
+    parser.add_argument(
+        "--failure-report-only",
+        action="store_true",
+        help="Rescore saved responses and write eval/failure_report.md without calling endpoints.",
+    )
     args = parser.parse_args(argv)
 
+    if args.failure_report_only:
+        saved = json.loads(RESULT_PATH.read_text(encoding="utf-8")) if RESULT_PATH.exists() else {}
+        saved_rows = saved.get("results", [])
+        for row in saved_rows:
+            if row.get("status") == "completed":
+                question = next((item for item in questions if item["id"] == row["id"]), None)
+                if question is not None:
+                    row["score"] = _score(question, row.get("response", {}))
+        _write_failure_report(saved_rows, questions)
+        print(f"Failure details saved to {FAILURE_REPORT_PATH.relative_to(ROOT)}")
+        return
+
     saved_results: dict[str, Any] = {}
-    if args.resume and RESULT_PATH.exists():
+    if (args.resume or args.rerun_failed) and RESULT_PATH.exists():
         saved_results = json.loads(RESULT_PATH.read_text(encoding="utf-8"))
     previous_rows = {
         row["id"]: row
         for row in saved_results.get("results", [])
         if row.get("status") == "completed"
+        and (not args.rerun_failed or not _row_failed(row))
     }
     rows: list[dict[str, Any]] = [
         previous_rows[item["id"]]
@@ -194,10 +362,13 @@ def main(argv: list[str] | None = None) -> None:
         if item["id"] in previous_rows
     ]
     rows_by_id = {row["id"]: row for row in rows}
-    ablation = saved_results.get("retrieval_ablation", {}) if args.resume else {}
+    ablation = saved_results.get("retrieval_ablation", {}) if (args.resume or args.rerun_failed) else {}
     ablation = {
         mode: dict(ablation.get(mode, {})) for mode in RETRIEVAL_MODES
     }
+    TestClient, app, get_retriever, get_settings, create_database_engine, HybridRetriever = (
+        _runtime_dependencies()
+    )
     engine = create_database_engine(get_settings().database_url)
     retrievers = {mode: HybridRetriever(engine, mode=mode) for mode in RETRIEVAL_MODES}
     current_mode = {"value": "hybrid"}
@@ -228,6 +399,7 @@ def main(argv: list[str] | None = None) -> None:
                 rows_by_id[question["id"]] = row
                 rows = [rows_by_id[item["id"]] for item in questions if item["id"] in rows_by_id]
                 _write_results(rows, ablation)
+                _write_failure_report(rows, questions)
             doc_questions = [item for item in questions if item["category"] == "doc"]
             for mode in RETRIEVAL_MODES:
                 current_mode["value"] = mode
@@ -247,11 +419,13 @@ def main(argv: list[str] | None = None) -> None:
                             "error": _safe_error_message(error),
                         }
                     _write_results(rows, ablation)
+                    _write_failure_report(rows, questions)
     finally:
         app.dependency_overrides.clear()
         engine.dispose()
 
     _write_results(rows, ablation)
+    _write_failure_report(rows, questions)
     _print_table(rows, "Evaluation results")
     print("\nRetrieval ablation (keyword hit rate)")
     print(f"{'MODE':<10} {'SCORED':<10} {'MEAN HIT RATE':<15}")
@@ -261,6 +435,7 @@ def main(argv: list[str] | None = None) -> None:
         rate = sum(scored) / len(scored) if scored else None
         print(f"{mode:<10} {len(scored):<10} {f'{rate:.0%}' if rate is not None else 'unscored':<15}")
     print(f"\nSaved full responses and scores to {RESULT_PATH.relative_to(ROOT)}")
+    print(f"Failure details saved to {FAILURE_REPORT_PATH.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

@@ -52,6 +52,14 @@ MONTH_YEAR_PATTERN = re.compile(
     r"\s+(\d{4})\b",
     re.IGNORECASE,
 )
+YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
+DAY_RANGE_PATTERN = re.compile(
+    r"\bbetween\s+(\d{1,2})\s+(?:and|to|through)\s+(\d{1,2})\s+"
+    r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\.?\s+(20\d{2})\b",
+    re.IGNORECASE,
+)
 
 PART_RETRIEVAL_TERMS = {
     "door seal": "door seal weatherstrip water leak wind noise",
@@ -80,6 +88,7 @@ class TriageContext(BaseModel):
     line: int | None = None
     start_date: date | None = None
     end_date: date | None = None
+    top_part_query: bool = False
 
 
 class KnowledgeRetriever(Protocol):
@@ -225,6 +234,13 @@ def triage_issue(issue: str) -> TriageContext:
     dates = [_parse_date(item) for item in ISO_DATE_PATTERN.findall(issue)]
     dates.extend(_parse_date(item) for item in NAMED_DATE_PATTERN.findall(issue))
     parsed_dates = sorted(item for item in dates if item is not None)
+    day_range = DAY_RANGE_PATTERN.search(issue)
+    if day_range:
+        month = datetime.strptime(day_range.group(3)[:3].title(), "%b").month
+        year = int(day_range.group(4))
+        parsed_dates = sorted(
+            (date(year, month, int(day_range.group(1))), date(year, month, int(day_range.group(2))))
+        )
     month_year = MONTH_YEAR_PATTERN.search(issue)
     if month_year:
         month_date = datetime.strptime(month_year.group(1)[:3].title(), "%b").date()
@@ -236,12 +252,22 @@ def triage_issue(issue: str) -> TriageContext:
         month_start, month_end = first_day, next_month - timedelta(days=1)
         if not parsed_dates:
             parsed_dates = [month_start, month_end]
+    year_match = YEAR_PATTERN.search(issue)
+    if year_match and not parsed_dates:
+        year = int(year_match.group(1))
+        parsed_dates = [date(year, 1, 1), date(year, 12, 31)]
+    wants_top_part = bool(
+        re.search(r"\b(?:which|what) part\b", lowered)
+        and re.search(r"\b(?:highest|most|top)\b", lowered)
+        and re.search(r"\bdefect", lowered)
+    )
     return TriageContext(
         part=part,
         plant=plant,
         line=int(line_match.group(1)) if line_match else None,
         start_date=parsed_dates[0] if parsed_dates else None,
         end_date=parsed_dates[-1] if parsed_dates else None,
+        top_part_query=wants_top_part,
     )
 
 
@@ -407,8 +433,8 @@ class InvestigationWorkflow:
         builder.add_node("report_agent", self._report_agent_node)
         builder.add_edge(START, "triage")
         builder.add_edge("triage", "data_agent")
-        builder.add_edge("triage", "knowledge_agent")
-        builder.add_edge(["data_agent", "knowledge_agent"], "report_agent")
+        builder.add_edge("data_agent", "knowledge_agent")
+        builder.add_edge("knowledge_agent", "report_agent")
         builder.add_edge("report_agent", END)
         self._graph = builder.compile()
 
@@ -427,7 +453,7 @@ class InvestigationWorkflow:
 
     async def _data_agent_node(self, state: WorkflowState) -> dict[str, Any]:
         context = TriageContext.model_validate(state["triage"])
-        if context.part is None:
+        if context.part is None and not context.top_part_query:
             return {
                 "supporting_data": [],
                 "data_limitation": "No matching part value was found in the production data.",
@@ -440,8 +466,10 @@ class InvestigationWorkflow:
 
         result_rows: list[dict[str, Any]] = []
         try:
+            query_context = context.model_dump(mode="json")
+            query_context["top_part_query"] = context.top_part_query
             results: list[InvestigationQueryResult] = self.query_runner.run_overviews(
-                context.model_dump(mode="json")
+                query_context
             )
         except Exception:
             logger.exception("Fixed investigation SQL failed")
@@ -461,8 +489,13 @@ class InvestigationWorkflow:
                     rows=result.rows,
                 ).model_dump(mode="json")
             )
+        triage = context.model_dump(mode="json")
+        top_parts = next((item.rows for item in results if item.name == "top_parts"), [])
+        if top_parts:
+            triage["part"] = str(top_parts[0]["part"])
+            triage["top_part_query"] = False
         limitation = "" if any(item["rows"] for item in result_rows) else "The fixed investigation queries returned no rows."
-        return {"supporting_data": result_rows, "data_limitation": limitation}
+        return {"supporting_data": result_rows, "data_limitation": limitation, "triage": triage}
 
     async def _knowledge_agent_node(self, state: WorkflowState) -> dict[str, Any]:
         context = TriageContext.model_validate(state["triage"])

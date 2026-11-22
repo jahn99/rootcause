@@ -119,6 +119,21 @@ def test_templates_return_spike_peak_weeks(query_runner: InvestigationQueryRunne
     assert weekly.parameters["part"] == "door seal"
 
 
+def test_top_parts_template_returns_highest_part(query_runner: InvestigationQueryRunner) -> None:
+    results = query_runner.run_overviews(
+        {
+            "part": None,
+            "top_part_query": True,
+            "start_date": "2025-01-01",
+            "end_date": "2025-12-31",
+        }
+    )
+
+    assert [item.name for item in results] == ["top_parts"]
+    assert results[0].rows[0]["part"] == "door seal"
+    assert results[0].rows[0]["defect_count"] == 133
+
+
 def test_part_name_maps_to_actual_database_value(query_runner: InvestigationQueryRunner) -> None:
     assert query_runner.resolve_part("Door-Seal") == "door seal"
     assert map_part_name("brakes", ["brake caliper", "wire harness"]) == "brake caliper"

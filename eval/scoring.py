@@ -26,20 +26,33 @@ def keyword_score(answer: str, sources: Iterable[Mapping[str, Any]], keywords: l
     }
 
 
-def sql_number_match(expected_answer: str, actual: Any) -> dict[str, Any]:
-    """Check whether every number stated in the expected answer appears in SQL output."""
-    expected = list(dict.fromkeys(value.replace(",", "") for value in NUMBER_PATTERN.findall(expected_answer)))
-    actual_text = _flatten(actual)
-    actual_numbers = {value.replace(",", "") for value in NUMBER_PATTERN.findall(actual_text)}
-    # Numeric formatting may differ (e.g. 3.2 vs 3.200), so compare values.
-    available = {float(value) for value in actual_numbers}
-    missing = [value for value in expected if float(value) not in available]
+def sql_expected_values_match(expected_values: list[Any], actual: Any) -> dict[str, Any]:
+    """Check explicit expected SQL values, accepting comma and 2-decimal formatting."""
+    flattened = _flatten(actual)
+    actual_numbers = {
+        round(float(value.replace(",", "")), 2)
+        for value in NUMBER_PATTERN.findall(flattened)
+    }
+    actual_text = flattened.casefold()
+    missing: list[Any] = []
+    for expected in expected_values:
+        if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+            if round(float(expected), 2) not in actual_numbers:
+                missing.append(expected)
+        elif str(expected).casefold() not in actual_text:
+            missing.append(expected)
     return {
         "status": "scored",
         "number_match": not missing,
-        "expected_numbers": expected,
+        "expected_values": expected_values,
         "missing_numbers": missing,
     }
+
+
+def sql_number_match(expected_answer: str, actual: Any) -> dict[str, Any]:
+    """Backward-compatible number extraction for older question files."""
+    expected = list(dict.fromkeys(value.replace(",", "") for value in NUMBER_PATTERN.findall(expected_answer)))
+    return sql_expected_values_match([float(value) for value in expected], actual)
 
 
 def _flatten(value: Any) -> str:

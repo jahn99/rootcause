@@ -90,6 +90,15 @@ class FakeInvestigationQueryRunner:
 
     def run_overviews(self, context: dict[str, object]) -> list[InvestigationQueryResult]:
         self.context = context
+        if context.get("top_part_query"):
+            return [
+                InvestigationQueryResult(
+                    "top_parts",
+                    "SELECT part, COUNT(*) FROM production_defects GROUP BY part",
+                    {},
+                    [{"part": "door seal", "defect_count": 457}],
+                )
+            ]
         rows = [] if self.empty else [{"count": 5}]
         return [
             InvestigationQueryResult(
@@ -211,6 +220,15 @@ def test_triage_extracts_part_line_plant_and_date_range() -> None:
     assert result.end_date == date(2025, 5, 18)
 
 
+def test_triage_extracts_natural_language_day_range() -> None:
+    result = triage_issue(
+        "Door-seal defects increased at Cedar Falls Line 3 between 5 and 18 May 2025."
+    )
+
+    assert result.start_date == date(2025, 5, 5)
+    assert result.end_date == date(2025, 5, 18)
+
+
 def test_workflow_gathers_both_sources_and_uses_only_evidence() -> None:
     workflow, query_runner, retriever, llm = build_workflow()
     report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
@@ -231,6 +249,7 @@ def test_workflow_without_plant_or_dates_runs_part_overviews() -> None:
     assert query_runner.context == {
         "part": "door seal", "plant": None, "line": 3,
         "start_date": None, "end_date": None,
+        "top_part_query": False,
     }
     assert "door seal weatherstrip water leak wind noise" in retriever.query
     assert len(report.supporting_data) == 4
@@ -250,6 +269,21 @@ def test_month_only_triage_and_investigation_input() -> None:
     assert query_runner.context["end_date"] == "2025-05-31"
     assert "door seal weatherstrip water leak wind noise" in retriever.query
     assert report.supporting_data
+
+
+def test_top_part_query_wins_triage_part_for_document_retrieval() -> None:
+    draft = sample_draft()
+    draft["root_cause_hypotheses"][0]["evidence"] = ["sql:top_parts", "complaint:123"]
+    workflow, query_runner, retriever, _ = build_workflow(FakeLLM([json.dumps(draft)]))
+    report = asyncio.run(
+        workflow.run(
+            "Which part had the highest production defect count across all plants and lines during 2025?"
+        )
+    )
+
+    assert query_runner.context["top_part_query"] is True
+    assert report.supporting_data[0].id == "sql:top_parts"
+    assert "door seal weatherstrip water leak wind noise" in retriever.query
 
 
 def test_no_results_are_reported_as_limitations() -> None:

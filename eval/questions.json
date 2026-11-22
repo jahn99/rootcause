@@ -61,6 +61,7 @@
     "question": "How many door-seal defects were logged on Cedar Falls, Line 3, between 5 and 18 May 2025?",
     "check": {
       "expected_answer": "133 door-seal defects.",
+      "expected_values": [133],
       "sql_used": "SELECT COUNT(*) FROM production_defects WHERE plant = 'Cedar Falls' AND line = 3 AND lower(part) IN ('door seal', 'door-seal') AND date BETWEEN DATE '2025-05-05' AND DATE '2025-05-18';"
     }
   },
@@ -70,6 +71,7 @@
     "question": "Which plant and line combination recorded the highest total number of defects during 2025?",
     "check": {
       "expected_answer": "Cedar Falls, Line 3, with 270 defects.",
+      "expected_values": ["Cedar Falls", 3, 270],
       "sql_used": "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects WHERE date >= DATE '2025-01-01' AND date < DATE '2026-01-01' GROUP BY plant, line ORDER BY defect_count DESC, plant, line LIMIT 1;"
     }
   },
@@ -79,6 +81,7 @@
     "question": "What is the average severity of door-seal defects compared with other part categories during 2025?",
     "check": {
       "expected_answer": "Door-seal defects: average severity 3.206 (457 defects); other parts: 2.697 (1,332 defects).",
+      "expected_values": [3.206, 2.697],
       "sql_used": "SELECT CASE WHEN lower(part) IN ('door seal', 'door-seal') THEN 'door seal' ELSE 'other parts' END AS group_name, ROUND(AVG(severity)::numeric, 3) AS average_severity, COUNT(*) AS defect_count FROM production_defects WHERE date >= DATE '2025-01-01' AND date < DATE '2026-01-01' GROUP BY group_name ORDER BY group_name;"
     }
   },
@@ -88,6 +91,7 @@
     "question": "Which manufacturing plant recorded the highest total downtime during 2025?",
     "check": {
       "expected_answer": "Cedar Falls, with 1,430 minutes of downtime.",
+      "expected_values": ["Cedar Falls", 1430],
       "sql_used": "SELECT plant, SUM(minutes) AS total_downtime_minutes FROM downtime_events WHERE date >= DATE '2025-01-01' AND date < DATE '2026-01-01' GROUP BY plant ORDER BY total_downtime_minutes DESC, plant LIMIT 1;"
     }
   },
@@ -97,6 +101,7 @@
     "question": "Which plant and line combination recorded the most defects with severity levels 4 or 5 during 2025?",
     "check": {
       "expected_answer": "Cedar Falls, Line 3, with 141 severity 4 or 5 defects.",
+      "expected_values": [141, "Cedar Falls", 3],
       "sql_used": "SELECT plant, line, COUNT(*) AS severe_defect_count FROM production_defects WHERE severity IN (4, 5) AND date >= DATE '2025-01-01' AND date < DATE '2026-01-01' GROUP BY plant, line ORDER BY severe_defect_count DESC, plant, line LIMIT 1;"
     }
   },
@@ -106,6 +111,7 @@
     "question": "What is the cumulative downtime recorded for Cedar Falls, Line 3, during 2025?",
     "check": {
       "expected_answer": "876 minutes.",
+      "expected_values": [876],
       "sql_used": "SELECT COALESCE(SUM(minutes), 0) AS total_downtime_minutes FROM downtime_events WHERE plant = 'Cedar Falls' AND line = 3 AND date >= DATE '2025-01-01' AND date < DATE '2026-01-01';"
     }
   },

@@ -132,6 +132,11 @@ Run the evaluation with:
 docker compose run --rm app python scripts/run_eval.py
 ```
 
+To rerun only questions that failed or errored in the saved results, use
+`docker compose run --rm app python scripts/run_eval.py --rerun-failed`. To
+refresh `eval/failure_report.md` from saved responses without calling endpoints,
+run `docker compose run --rm app python scripts/run_eval.py --failure-report-only`.
+
 The script reads `eval/questions.json`, writes detailed results to
 `eval/results.json` on the host, and compares vector-only, BM25-only, and hybrid
 retrieval. Document questions with an empty `expected_keywords` list are

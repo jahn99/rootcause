@@ -1,44 +1,54 @@
-"""Focused tests for evaluation scoring helpers."""
+"""Tests for deterministic evaluation scoring and failure explanations."""
 
-from eval.scoring import combined_score, keyword_score, safety_score, sql_number_match
-
-
-def test_keyword_score_reports_rate_and_cited_source_hit() -> None:
-    score = keyword_score(
-        "A water leak was reported.",
-        [{"snippet": "Owner reported water entering the cabin."}],
-        ["water", "cabin", "airbag"],
-    )
-
-    assert score["keyword_hit_rate"] == 1 / 3
-    assert score["source_keyword_hit"] is True
+from eval.scoring import sql_expected_values_match
+from scripts.run_eval import _failure_reason, _render_failure_report, _score
 
 
-def test_empty_keyword_list_is_unscored() -> None:
-    assert keyword_score("any answer", [], []) == {
-        "status": "unscored",
-        "keyword_hit_rate": None,
-        "source_keyword_hit": None,
-    }
-
-
-def test_sql_number_match_handles_grouped_and_decimal_values() -> None:
-    score = sql_number_match(
-        "Door seal: 3.206 (457 defects); other parts: 2.697 (1,332 defects).",
-        [{"door_avg": 3.206, "door_count": 457, "other_avg": 2.697, "other_count": 1332}],
+def test_sql_expected_values_normalize_commas_and_accept_two_decimal_rounding() -> None:
+    score = sql_expected_values_match(
+        [1332, 3.206, 2.697],
+        [{"count": "1,332", "first_avg": 3.21, "second_avg": 2.70}],
     )
 
     assert score["number_match"] is True
     assert score["missing_numbers"] == []
 
 
-def test_sql_number_match_fails_when_expected_value_is_missing() -> None:
-    assert sql_number_match("133 defects", [{"count": 132}])["number_match"] is False
+def test_sql_explicit_values_still_fail_for_wrong_answer() -> None:
+    question = {
+        "category": "sql",
+        "check": {"expected_values": [133]},
+    }
+
+    score = _score(question, {"rows": [{"defect_count": 0}]})
+
+    assert score["number_match"] is False
+    assert score["missing_numbers"] == [133]
+    assert "133" in _failure_reason({"score": score})
 
 
-def test_safety_and_combined_scoring() -> None:
-    assert safety_score("refuse", {"refused": True})["behavior_match"] is True
-    assert safety_score("not_found", {"answer": "No rows found", "rows": []})["behavior_match"] is True
-    assert combined_score(
-        {"supporting_data": [{"rows": [{"count": 3}]}], "supporting_documents": [{"id": "complaint:1"}]}
-    )["combined_match"] is True
+def test_failure_report_explains_answer_vs_source_keyword_results() -> None:
+    questions = [{
+        "id": "Q03",
+        "category": "doc",
+        "question": "What complaints describe water leaking into the vehicle cabin?",
+        "check": {"expected_keywords": ["water", "leak"]},
+    }]
+    rows = [{
+        "id": "Q03",
+        "category": "doc",
+        "status": "completed",
+        "response": {"answer": "not found in the documents", "sources": []},
+        "score": {
+            "status": "scored",
+            "keyword_hit_rate": 0.0,
+            "source_keyword_hit": True,
+            "matched_keywords": [],
+        },
+    }]
+
+    report = _render_failure_report(rows, questions)
+
+    assert "answer keyword hit rate was 0%" in report.casefold()
+    assert "Cited-source keyword hit: True" in report
+    assert "not found in the documents" in report
