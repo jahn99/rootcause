@@ -24,6 +24,7 @@ from app.reports.workflow import (
     prepare_report_evidence,
     triage_issue,
 )
+from app.reports.verifier import verify_report_claims
 
 
 def sample_draft() -> dict[str, object]:
@@ -383,6 +384,72 @@ def test_numeric_consistency_still_rejects_unsupported_count_and_percentage() ->
     assert _unsupported_report_numbers(report_fields, key_findings) == ["9", "999"]
 
 
+def test_claim_verifier_supports_number_in_key_findings() -> None:
+    result = verify_report_claims(
+        {"problem_description": "There were 133 defects."},
+        key_findings=["Defect total: 133 defects."],
+        sql_rows=[],
+        retrieved_sources=[],
+    )
+
+    assert result.supported == 1
+    assert result.claims[0].status == "supported"
+
+
+def test_claim_verifier_rejects_number_missing_from_key_findings() -> None:
+    result = verify_report_claims(
+        {"problem_description": "There were 999 defects."},
+        key_findings=["Defect total: 133 defects."],
+        sql_rows=[{"defect_count": 999}],
+        retrieved_sources=[],
+    )
+
+    assert result.unsupported == 1
+    assert result.claims[0].status == "unsupported"
+
+
+def test_claim_verifier_checks_retrieved_and_missing_ids() -> None:
+    evidence = {
+        "key_findings": [], "sql_rows": [],
+        "retrieved_sources": [{"id": "complaint:123"}],
+    }
+    valid = verify_report_claims(
+        {"problem_description": "The complaint complaint:123 describes water intrusion."},
+        **evidence,
+    )
+    invalid = verify_report_claims(
+        {"problem_description": "The complaint complaint:999 describes water intrusion."},
+        **evidence,
+    )
+    invalid_hypothesis = verify_report_claims(
+        {
+            "root_cause_hypotheses": [
+                {"hypothesis": "A seal gap may contribute to water intrusion.", "evidence": ["complaint:999"]}
+            ]
+        },
+        **evidence,
+    )
+
+    assert valid.claims[0].status == "supported"
+    assert invalid.claims[0].status == "unsupported"
+    assert any(
+        item.status == "unsupported" and "complaint:999" in item.claim
+        for item in invalid_hypothesis.claims
+    )
+
+
+def test_claim_verifier_leaves_action_text_not_checkable() -> None:
+    result = verify_report_claims(
+        {"containment_actions": ["Inspect affected parts and hold suspect output."]},
+        key_findings=[],
+        sql_rows=[],
+        retrieved_sources=[],
+    )
+
+    assert result.not_checkable == 1
+    assert result.claims[0].status == "not_checkable"
+
+
 def test_deterministic_fallback_keeps_key_findings_and_relevant_documents() -> None:
     findings = ["Peak week starting 2025-05-12: 91 defects."]
     document = SupportingDocument(
@@ -410,6 +477,8 @@ def test_report_retries_unsupported_numbers_then_fallback_keeps_findings_and_sou
     assert "133" in report.answer
     assert report.supporting_documents[0].id == "complaint:123"
     assert any("LLM draft could not be validated" in item for item in report.limitations)
+    assert report.verification is not None
+    assert report.verification["claims"]
 
 
 def test_no_results_are_reported_as_limitations() -> None:
@@ -566,6 +635,8 @@ def test_investigate_endpoint_end_to_end_with_fake_agents_and_llm() -> None:
     assert len(body["supporting_data"]) == 3
     assert body["supporting_documents"][0]["id"] == "complaint:123"
     assert body["human_review_note"] == "Draft for human review."
+    assert body["verification"]["supported"] >= 1
+    assert body["verification"]["claims"]
 
 
 def test_investigate_unexpected_error_returns_clear_json() -> None:

@@ -122,6 +122,12 @@ textarea::placeholder { color: #a2afb2; }
 .finding-scope { display: inline-flex; margin-left: 8px; padding: 3px 7px; border: 1px solid #e3ebe8; border-radius: 12px; background: #f7faf8; color: #638076; font-size: 9px; }
 .report-copy { margin: 0; color: #52656b; font-size: 11px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .hypothesis-list { display: grid; }
+.verification-summary { margin: -5px 0 0; color: #61757a; font-size: 11px; }
+.verification-list { display: grid; gap: 8px; margin: 13px 0 0; padding: 0; list-style: none; }
+.verification-list li { display: grid; grid-template-columns: max-content 1fr; align-items: start; gap: 4px 9px; color: #61757a; font-size: 10px; line-height: 1.5; }
+.verification-status { color: #39806d; font-size: 9px; font-weight: 700; text-transform: capitalize; }
+.verification-unsupported, .verification-unsupported .verification-status { color: #ad4b43 !important; }
+.verification-list small { grid-column: 2; color: #a7635d; font-size: 9px; }
 .hypothesis { padding: 14px 0; border-top: 1px solid #edf0f1; }
 .hypothesis:first-child { padding-top: 0; border-top: 0; }
 .hypothesis:last-child { padding-bottom: 0; }

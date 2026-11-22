@@ -188,8 +188,15 @@ are claimed here; fill in this table from the generated `eval/results.json`.
   and model availability.
 - Document evaluation uses keyword-based scoring; it does not measure factual
   correctness comprehensively.
-- There is no independent verifier for generated answers or 8D reports. Reports
-  are drafts and need human review.
+- Reports are drafts and need human review. The claim verifier does not verify
+  causal reasoning.
+
+## Claim verifier
+
+The `/investigate` claim verifier is rule-based. It checks numbers against
+Python-built key findings and checks cited complaint or recall IDs against
+retrieved documents. It does not verify causal reasoning or other factual
+claims; reports still need human review.
 
 ## How I used AI coding assistants
 

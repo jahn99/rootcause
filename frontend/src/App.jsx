@@ -133,6 +133,34 @@ function KeyFindings({ items, report }) {
   );
 }
 
+function ClaimVerificationView({ verification }) {
+  if (!isRecord(verification)) return null;
+  const claims = list(verification.claims).filter(isRecord);
+  const counts = [
+    ["supported", verification.supported],
+    ["unsupported", verification.unsupported],
+    ["not checkable", verification.not_checkable],
+  ];
+  return (
+    <Panel title="Claim verification" eyebrow="Rule-based review">
+      <p className="verification-summary">
+        {counts.map(([label, count]) => `${Number.isFinite(count) ? count : "Not available"} ${label}`).join(", ")}
+      </p>
+      {claims.length > 0 && (
+        <ul className="verification-list">
+          {claims.map((item, index) => (
+            <li className={item.status === "unsupported" ? "verification-unsupported" : ""} key={`${index}-${text(item.claim)}`}>
+              <span className="verification-status">{text(item.status, "not available")}</span>
+              <span>{text(item.claim)}</span>
+              {item.status === "unsupported" && <small>{text(item.reason)}</small>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
 function ReportView({ report }) {
   if (!report) {
     return <EmptyState title="No report yet" description="Run an investigation to create an evidence-linked 8D draft." />;
@@ -145,6 +173,7 @@ function ReportView({ report }) {
       <Panel title="Key findings" eyebrow="Evidence summary" className="accent-panel">
         <KeyFindings items={report.key_findings} report={report} />
       </Panel>
+      <ClaimVerificationView verification={report.verification} />
 
       <div className="report-grid">
         <Panel title="Problem" eyebrow="D2 · Describe">

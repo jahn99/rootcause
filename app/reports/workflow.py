@@ -809,6 +809,15 @@ class InvestigationWorkflow:
                 # Validate once more so every hypothesis maps to gathered evidence IDs.
                 if any(set(hypothesis.evidence) - set(evidence_ids) for hypothesis in report.root_cause_hypotheses):
                     raise ValueError("A root-cause hypothesis cited an unknown evidence ID")
+                from app.reports.verifier import verify_report_claims
+
+                verification = verify_report_claims(
+                    report,
+                    key_findings=key_findings,
+                    sql_rows=[row for item in raw_sql_data for row in item.rows],
+                    retrieved_sources=[item.model_dump(mode="json") for item in documents],
+                )
+                report = report.model_copy(update={"verification": verification.model_dump(mode="json")})
                 return {"report": report.model_dump(mode="json")}
             except (ValueError, ValidationError) as error:
                 validation_error = str(error)
@@ -828,4 +837,13 @@ class InvestigationWorkflow:
         fallback = deterministic_fallback_report(
             state["issue"], sql_data, documents, limitations, key_findings
         )
+        from app.reports.verifier import verify_report_claims
+
+        verification = verify_report_claims(
+            fallback,
+            key_findings=key_findings,
+            sql_rows=[row for item in raw_sql_data for row in item.rows],
+            retrieved_sources=[item.model_dump(mode="json") for item in documents],
+        )
+        fallback = fallback.model_copy(update={"verification": verification.model_dump(mode="json")})
         return {"report": fallback.model_dump(mode="json")}

@@ -58,6 +58,7 @@ class EightDReport(ReportDraft):
     supporting_data: list[SupportingData]
     supporting_documents: list[SupportingDocument]
     human_review_note: Literal["Draft for human review."] = "Draft for human review."
+    verification: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_evidence_citations(self) -> EightDReport:
