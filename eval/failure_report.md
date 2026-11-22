@@ -2,7 +2,7 @@
 
 For document questions, answer keyword hit rate measures keywords in the answer only. The cited-source keyword result is reported separately and does not raise the answer score.
 
-Failed questions: 8
+Failed questions: 3
 
 ## Q01 (doc)
 
@@ -12,104 +12,39 @@ Failed questions: 8
 
 ```text
 Answer: not found in the documents
-Cited sources: [{"id": "complaint:11522580", "snippet": "the door using the inner/outer door handle. Safety concerns for owners of this vehicle. - Driver and occupant safety is at increased risk with unknown integrity of the door lock actuator and its ability to securely lock the vehicle door(s). - Owners and insurers of this vehicle are at increased risk for vehicle theft due to the vehicle door(s) lock being ino"}, {"id": "complaint:11749412", "snippet": "continue driving. This unexpected failure forced my car to stop in the middle of the highway, placing me and other motorists at significant risk of a serious accident or fatality. A vehicle should not suddenly become inoperable while traveling at highway speeds due to a mechanical defect. This creates an extremely dangerous situation, especially in heavy tra"}, {"id": "complaint:11522580", "snippet": "the key fob - Lock/unlock inoperable with door switch (driver/passenger) - Walkaway auto door lock function inoperable - No audible beep when locking/unlocking - Outer door handle inoperable Vehicle that is associated with this incident has not been inspected by original dealer where vehicle originated from. The vehicle associated with this incident provides"}, {"id": "complaint:11597964", "snippet": "Vehicle: TOYOTA CAMRY 2021 odiNumber: 11597964 manufacturer: Toyota Motor Corporation crash: False fire: False numberOfInjuries: 0 numberOfDeaths: 0 dateOfIncident: 06/26/2024 dateComplaintFiled: 07/01/2024 vin: 4T1G31AK5MU components: ELECTRICAL SYSTEM,UNKNOWN OR OTHER,LATCHES/LOCKS/LINKAGES summary: The driver side rear door would not open from the inside "}, {"id": "complaint:11767198", "snippet": "screens, select different options, and interfere with the navigation information I am trying to view while driving. This creates a safety concern because the unexpected touchscreen activity is distracting and causes me to take my attention away from the road to correct what the system is doing. The issue happens without warning and can occur while the vehicl"}]
+Cited sources: [{"id": "complaint:11732342", "snippet": "Power Steering Control Module; U0151 Restraints Control Module; U0122/U1122 VDC; U0126 Steering Angle Sensor; plus multiple EyeSight faults. Dealer documented moisture on both A-pillars, driver kick panel, standing water in cupholders and center console. Prior intermittent symptom: passenger seatbelt alarm on empty seat, two occasions in prior months, consis"}, {"id": "complaint:11730063", "snippet": "Vehicle: SUBARU OUTBACK 2022 odiNumber: 11730063 manufacturer: Subaru of America, Inc. crash: False fire: False numberOfInjuries: 0 numberOfDeaths: 0 dateOfIncident: 01/01/2025 dateComplaintFiled: 04/08/2026 vin: 4S4BTAFC9N3 components: UNKNOWN OR OTHER summary: The component that failed is the cowl panel weather stripping/seal located at the base of the win"}, {"id": "complaint:11679823", "snippet": "led to illness from exposure. This failure poses safety risks, including: Driver distraction if the failure occurs while driving. Possible water damage to electrical components, potentially affecting vehicle operation. Reduced visibility in heavy rain. Security risks if the vehicle cannot be secured. Online research and discussions with other owners revealed"}, {"id": "complaint:11520961", "snippet": "dealership at each service. However the problem still persists. Possible problem can be any of the following individually or in combination: a) Seal between the tire and rim is inadequate. b) Slow leakage in tire valves or c) Tires are of poor quality permitting air to escape from the body of the tires. products: {'type': 'Vehicle', 'productYear': '2021', 'p"}, {"id": "complaint:11717034", "snippet": "inspection later identified over 100,000 mold spores and at least ten (10) different types of mold inside the vehicle. Although the source of water intrusion was reportedly repaired on October 25, 2024, the vehicle remains inoperative and unsafe due to mold contamination. The mold condition persists despite repair attempts. I remain in possession of the vehi"}]
 ```
 
 **Expected value:** `{"expected_keywords": ["seal", "water", "leak"]}`
-
-**Root cause category:** retrieval
-
-**Why it failed:** Answer keyword hit rate was 0%; matched []. Cited-source keyword hit: False.
-
-## Q03 (doc)
-
-**Question:** What complaints describe water leaking into the vehicle cabin?
-
-**Actual response:**
-
-```text
-Answer: not found in the documents
-Cited sources: [{"id": "complaint:11577254", "snippet": "happening again on these Spring days where temperatures fluctuate. It's incredibly dangerous to drive a car that is leaking gasoline out the side. Please help us. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}, {"id": "complaint:11466551", "snippet": "Vehicle: HONDA ACCORD 2021 odiNumber: 11466551 manufacturer: Honda (American Honda Motor Co.) crash: False fire: False numberOfInjuries: 0 numberOfDeaths: 0 dateOfIncident: 01/05/2022 dateComplaintFiled: 05/28/2022 vin: 1hgcv2f33ma components: STEERING,SUSPENSION,SERVICE BRAKES summary: When turning left or right from/into a parking spot a rubbing sound (sim"}, {"id": "complaint:11577254", "snippet": "do anything to resolve the problem. I have requested a replacement car since ours only has 20,000 miles and is practically new. There were no warning lamps, messages, our only indication of this problem was a strong odor of gasoline, a visible stain down the side of the car often on days with large temperature changes from cold to hot, and the time when I ac"}, {"id": "complaint:11725968", "snippet": "Vehicle: HONDA ACCORD 2021 odiNumber: 11725968 manufacturer: Honda (American Honda Motor Co.) crash: False fire: False numberOfInjuries: 0 numberOfDeaths: 0 dateOfIncident: 03/15/2026 dateComplaintFiled: 03/20/2026 vin: 1HGCV2F93MA components: ELECTRICAL SYSTEM,UNKNOWN OR OTHER summary: ssue: Water intrusion into tail light assembly causing electrical and sa"}, {"id": "complaint:11725968", "snippet": "safety‑critical system warnings, including brake system alerts, ABS/VSA warnings, and Honda Sensing failures. The vehicle also lost acceleration and entered a reduced‑power “limp mode,” creating a hazardous driving situation. The dealership diagnosed the issue as water intrusion into the tail light assembly. The entire assembly had to be replaced at a cost o"}]
-```
-
-**Expected value:** `{"expected_keywords": ["water", "leak"]}`
 
 **Root cause category:** LLM output
 
 **Why it failed:** Answer keyword hit rate was 0%; matched []. Cited-source keyword hit: True.
 
-## Q06 (doc)
+## Q04 (doc)
 
-**Question:** Which recalls involve electrical wiring defects or short circuits?
+**Question:** What issues have been reported with airbag inflators?
 
 **Actual response:**
 
 ```text
-Answer: not found in the documents
-Cited sources: [{"id": "complaint:11759493", "snippet": "\"See Dealer.\" 3. The power door locks repeatedly click and cycle as though they are attempting to lock or unlock on their own. 4. The stereo, on its own, scrolls through buttons and bluetooth blinking through all the stereo options on its own. 5.An OBD diagnostic code reader is unable to properly communicate with the vehicle and reports \"Unable to Connect/Ve"}, {"id": "complaint:11568290", "snippet": "diagnosis and report the unsafety incident that occurred with absolutely no warning lamps. Inspection lead to repair of engine but nothing done about no warning lamps/electrical system products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'vehicle manufacturer', 'productModel': 'C300', 'manufacturer': 'vehicle manufacturer'}"}, {"id": "complaint:11759493", "snippet": "vehicle system defect rather than ordinary wear and tear. I am particularly concerned because the dashboard warnings involve vehicle systems that may affect braking, steering, stability control, driver-assistance features, and other safety functions. When numerous safety warnings illuminate at the same time, I have no reliable way of knowing which vehicle sy"}, {"id": "complaint:11726673", "snippet": "manufacturer had exceeded a reasonable amount of time for the recall repair. The contact had not experienced a failure. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}, {"id": "complaint:11726494", "snippet": "part to do the recall repair was not yet available. The contact had not experienced a failure. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}]
+Answer: **Issues reported with air‑bag inflators**
+
+| Report | Specific failure mode or effect | Source |
+|--------|--------------------------------|--------|
+| 1 | The air‑bag system may **fail to deploy correctly** because it cannot properly classify the occupant’s weight, increasing the risk of injury in a crash. | [complaint:11653582] |
+| 2 | A **spontaneous side‑curtain air‑bag deployment** occurred while the vehicle was parked and the engine was off, caused by humidity/short‑circuit sensor defects. The deployment damaged the interior. | [complaint:11757820] |
+| 3 | **Explosive or otherwise defective air‑bag inflators** (Takata) have prompted recalls, and sensor defects (e.g., the front passenger seat OCS sensor) may compromise the air‑bag’s ability to protect occupants. | [complaint:11695516] |
+
+These excerpts directly document problems with air‑bag inflators, including deployment failure, accidental deployment, and potential explosive danger.
+Cited sources: [{"id": "complaint:11738897", "snippet": "but electrical components that are used now. I trusted what they told me. It made sense. How could breaks be like that on a new car? What they needed to tell me was get to the nearest Nissan immediately because they were aware they've been having cars with break issues especially between 2021 and 2023. DO YOU UNDERSTAND THESE ARE BRAKE ISSUES? And what is th"}, {"id": "complaint:11653582", "snippet": "allow the airbag system to properly classify the occupant’s weight, and the airbag may not deploy as designed in certain crashes, increasing the risk of injury.. products: {'type': 'Vehicle', 'productYear': '2020', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}, {"id": "complaint:11757820", "snippet": "Vehicle: HONDA ACCORD 2020 odiNumber: 11757820 manufacturer: Honda (American Honda Motor Co.) crash: False fire: False numberOfInjuries: 0 numberOfDeaths: 0 dateOfIncident: 08/07/2026 dateComplaintFiled: 08/18/2026 vin: 1hgcv1f14la components: AIR BAGS summary: My parked 2020 Honda Accord had a spontaneous side curtain airbag deployment with the engine off, "}, {"id": "complaint:11709742", "snippet": "serious discomfort and pain. Additionally, to this day (1/8/26), my upper back and neck has been in pain and sore. There were no warnings and problems prior to the failure of the airbags being deployed. products: {'type': 'Vehicle', 'productYear': '2024', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}, {"id": "complaint:11695516", "snippet": "but they declined to cover the repair, stating the vehicle is out of warranty and not covered under any current recall or extended warranty. However, this is a critical safety issue that affects the airbag system’s ability to protect occupants properly. I’ve discovered that Toyota has already issued multiple airbag- and sensor-related recalls in recent years"}]
 ```
 
-**Expected value:** `{"expected_keywords": ["wiring", "short"]}`
+**Expected value:** `{"expected_keywords": ["airbag", "inflator"]}`
 
 **Root cause category:** retrieval
 
-**Why it failed:** Answer keyword hit rate was 0%; matched []. Cited-source keyword hit: False.
-
-## Q08 (sql)
-
-**Question:** How many door-seal defects were logged on Cedar Falls, Line 3, between 5 and 18 May 2025?
-
-**Actual response:**
-
-```text
-Answer: 0 door-seal defects were logged.
-SQL: SELECT COUNT(*) AS door_seal_count FROM public.production_defects WHERE plant = 'Cedar Falls' AND line = 3 AND defect_type = 'door-seal' AND date BETWEEN '2025-05-05' AND '2025-05-18' LIMIT 100
-Rows: [{"door_seal_count": 0}]
-```
-
-**Expected value:** `{"expected_answer": "133 door-seal defects.", "expected_values": [133]}`
-
-**Root cause category:** SQL
-
-**Why it failed:** Expected SQL values missing from returned rows: [133].
-
-## Q10 (sql)
-
-**Question:** What is the average severity of door-seal defects compared with other part categories during 2025?
-
-**Actual response:**
-
-```text
-Answer: No records were found.
-SQL: SELECT CASE WHEN part = 'door-seal' THEN 'door-seal' ELSE 'other' END AS part_category, AVG(severity) AS avg_severity FROM public.production_defects WHERE date >= '2025-01-01' AND date <= '2025-12-31' GROUP BY part_category LIMIT 100
-Rows: [{"part_category": "other", "avg_severity": 2.8272778088317496}]
-```
-
-**Expected value:** `{"expected_answer": "Door-seal defects: average severity 3.206 (457 defects); other parts: 2.697 (1,332 defects).", "expected_values": [3.206, 2.697]}`
-
-**Root cause category:** SQL
-
-**Why it failed:** Expected SQL values missing from returned rows: [3.206, 2.697].
-
-## Q14 (combined)
-
-**Question:** How severe was the increase in door-seal defects on Cedar Falls, Line 3, between 5 and 18 May 2025, and what causes of similar failures are reported in NHTSA complaints?
-
-**Actual response:**
-
-```text
-Report summary: problem_description: "Door‑seal defect rate rose from 42 to 91 units between May 5 and May 12, 2025 on Cedar Falls Line 3."
-root_cause_hypotheses: [{"hypothesis": "Defect count doubled between the two weeks, indicating a process change or material issue.", "confidence_level": "high", "evidence": ["sql:weekly_defects"]}, {"hypothesis": "Higher average severity for requested parts suggests a quality issue affecting door‑seal components.", "confidence_level": "medium", "evidence": ["sql:severity_comparison"]}]
-limitations: ["No supporting NHTSA documents were retrieved.", "insufficient evidence for NHTSA complaints."]
-supporting_data: [{"id": "sql:weekly_defects", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "defect_count": 42}, {"week": "2025-05-12T00:00:00+00:00", "defect_count": 91}]}, {"id": "sql:defects_by_plant_line", "sql": "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY plant, line ORDER BY defect_count DESC, plant, line LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"plant": "Cedar Falls", "line": 3, "defect_count": 133}, {"plant": "Lakeview", "line": 4, "defect_count": 7}, {"plant": "Lakeview", "line": 3, "defect_count": 4}, {"plant": "Pine Ridge", "line": 4, "defect_count": 3}, {"plant": "Cedar Falls", "line": 2, "defect_count": 2}, {"plant": "Lakeview", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 3, "defect_count": 2}, {"plant": "Cedar Falls", "line": 1, "defect_count": 1}, {"plant": "Pine Ridge", "line": 2, "defect_count": 1}]}, {"id": "sql:severity_comparison", "sql": "SELECT part, AVG(severity) AS average_severity, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY part LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"part_group": "requested part", "average_severity": 3.85, "defect_count": 157}, {"part_group": "all other parts", "average_severity": 2.83, "defect_count": 102}]}, {"id": "sql:weekly_downtime", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, SUM(minutes) AS downtime_minutes FROM downtime_events WHERE plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "downtime_minutes": 259}, {"week": "2025-05-12T00:00:00+00:00", "downtime_minutes": 455}]}]
-supporting_documents: []
-```
-
-**Expected value:** `{"expected_keywords": ["seal", "133"]}`
-
-**Root cause category:** retrieval
-
-**Why it failed:** Combined check requires data and citations; data evidence=True, document citations=False.
+**Why it failed:** Answer keyword hit rate was 50%; matched ['inflator']. Cited-source keyword hit: True.
 
 ## Q15 (combined)
 
@@ -118,33 +53,14 @@ supporting_documents: []
 **Actual response:**
 
 ```text
-Report summary: problem_description: "Highest defect count part in 2025 is door seal with 457 defects; no related NHTSA recalls found."
-limitations: ["insufficient evidence", "No supporting NHTSA documents were retrieved."]
+Answer: Top part by defect count: door seal with 457 defects. No relevant NHTSA document evidence was retrieved.
+Report summary: problem_description: "Which part had the highest production defect count across all plants and lines during 2025, and are there related NHTSA recalls?"
+limitations: ["The LLM draft could not be validated after one retry; a deterministic fallback was used.", "insufficient evidence to confirm a root cause without a validated evidence-linked draft.", "No supporting NHTSA documents were retrieved."]
 supporting_data: [{"id": "sql:top_parts", "sql": "SELECT part, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY defect_count DESC, part LIMIT 100", "parameters": {"start_date": "2025-01-01", "end_date": "2025-12-31"}, "rows": [{"part": "door seal", "defect_count": 457}, {"part": "seat frame", "defect_count": 345}, {"part": "brake caliper", "defect_count": 342}, {"part": "instrument panel", "defect_count": 341}, {"part": "wire harness", "defect_count": 304}]}]
 supporting_documents: []
 ```
 
 **Expected value:** `{"expected_keywords": ["door seal", "recall"]}`
-
-**Root cause category:** retrieval
-
-**Why it failed:** Combined check requires data and citations; data evidence=True, document citations=False.
-
-## Q16 (combined)
-
-**Question:** Did the door-seal defect spike at Cedar Falls, Line 3, between 5 and 18 May 2025, correspond with increased downtime, and are similar failures documented in public complaints?
-
-**Actual response:**
-
-```text
-Report summary: problem_description: "The door seal defect count spiked at Cedar Falls Line 3 between May 5–18 2025 and appears linked to increased downtime, but public complaints are not documented."
-root_cause_hypotheses: [{"hypothesis": "Defect spike coincides with a rise in downtime during the same weeks.", "confidence_level": "high", "evidence": ["sql:weekly_defects", "sql:weekly_downtime"]}, {"hypothesis": "Cedar Falls Line 3 had a disproportionately high defect count compared to other lines.", "confidence_level": "medium", "evidence": ["sql:defects_by_plant_line"]}, {"hypothesis": "Door seal defects have a higher average severity than other parts.", "confidence_level": "medium", "evidence": ["sql:severity_comparison"]}]
-limitations: ["No supporting NHTSA documents were retrieved.", "insufficient evidence"]
-supporting_data: [{"id": "sql:weekly_defects", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "defect_count": 42}, {"week": "2025-05-12T00:00:00+00:00", "defect_count": 91}]}, {"id": "sql:defects_by_plant_line", "sql": "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY plant, line ORDER BY defect_count DESC, plant, line LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"plant": "Cedar Falls", "line": 3, "defect_count": 133}, {"plant": "Lakeview", "line": 4, "defect_count": 7}, {"plant": "Lakeview", "line": 3, "defect_count": 4}, {"plant": "Pine Ridge", "line": 4, "defect_count": 3}, {"plant": "Cedar Falls", "line": 2, "defect_count": 2}, {"plant": "Lakeview", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 3, "defect_count": 2}, {"plant": "Cedar Falls", "line": 1, "defect_count": 1}, {"plant": "Pine Ridge", "line": 2, "defect_count": 1}]}, {"id": "sql:severity_comparison", "sql": "SELECT part, AVG(severity) AS average_severity, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY part LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"part_group": "requested part", "average_severity": 3.85, "defect_count": 157}, {"part_group": "all other parts", "average_severity": 2.83, "defect_count": 102}]}, {"id": "sql:weekly_downtime", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, SUM(minutes) AS downtime_minutes FROM downtime_events WHERE plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "downtime_minutes": 259}, {"week": "2025-05-12T00:00:00+00:00", "downtime_minutes": 455}]}]
-supporting_documents: []
-```
-
-**Expected value:** `{"expected_keywords": ["downtime", "seal"]}`
 
 **Root cause category:** retrieval
 
