@@ -125,7 +125,9 @@ function KeyFindings({ items, report }) {
         <li key={`${index}-${item}`}>
           {item}
           {scope && item.startsWith("Top part by defect count:") && (
+            <>{" "}
             <span className="finding-scope">Scope: {scope}</span>
+            </>
           )}
         </li>
       ))}

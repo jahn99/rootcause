@@ -386,19 +386,25 @@ def test_numeric_consistency_still_rejects_unsupported_count_and_percentage() ->
 
 def test_claim_verifier_supports_number_in_key_findings() -> None:
     result = verify_report_claims(
-        {"problem_description": "There were 133 defects."},
+        {
+            "problem_description": "The report reviews a manufacturing issue.",
+            "answer": "Defect total: 133 defects. There were 133 defects.",
+            "key_findings": ["Defect total: 133 defects."],
+        },
         key_findings=["Defect total: 133 defects."],
         sql_rows=[],
         retrieved_sources=[],
     )
 
     assert result.supported == 1
-    assert result.claims[0].status == "supported"
+    assert result.not_checkable == 1
+    assert sum(item.status == "supported" for item in result.claims) == 1
+    assert all(item.claim != "Defect total: 133 defects." for item in result.claims)
 
 
 def test_claim_verifier_rejects_number_missing_from_key_findings() -> None:
     result = verify_report_claims(
-        {"problem_description": "There were 999 defects."},
+        {"answer": "There were 999 defects."},
         key_findings=["Defect total: 133 defects."],
         sql_rows=[{"defect_count": 999}],
         retrieved_sources=[],
@@ -414,11 +420,11 @@ def test_claim_verifier_checks_retrieved_and_missing_ids() -> None:
         "retrieved_sources": [{"id": "complaint:123"}],
     }
     valid = verify_report_claims(
-        {"problem_description": "The complaint complaint:123 describes water intrusion."},
+        {"answer": "The complaint complaint:123 describes water intrusion."},
         **evidence,
     )
     invalid = verify_report_claims(
-        {"problem_description": "The complaint complaint:999 describes water intrusion."},
+        {"answer": "The complaint complaint:999 describes water intrusion."},
         **evidence,
     )
     invalid_hypothesis = verify_report_claims(
@@ -448,6 +454,59 @@ def test_claim_verifier_leaves_action_text_not_checkable() -> None:
 
     assert result.not_checkable == 1
     assert result.claims[0].status == "not_checkable"
+
+
+def test_claim_verifier_deduplicates_identical_claims() -> None:
+    result = verify_report_claims(
+        {
+            "answer": "There were 133 defects.",
+            "corrective_actions": ["There were 133 defects."],
+        },
+        key_findings=["Defect total: 133 defects."],
+        sql_rows=[],
+        retrieved_sources=[],
+    )
+
+    assert result.supported == 1
+    assert len(result.claims) == 1
+
+
+def test_claim_verifier_does_not_treat_line_number_as_metric() -> None:
+    result = verify_report_claims(
+        {"answer": "Line 3 showed a rise in defects."},
+        key_findings=["Defect total: 133 defects on Line 3."],
+        sql_rows=[],
+        retrieved_sources=[],
+    )
+
+    assert result.not_checkable == 1
+    assert result.unsupported == 0
+
+
+def test_claim_verifier_ignores_numbers_inside_retrieved_source_excerpt() -> None:
+    snippet = "The owner reported 999 defects in 2025 and described water intrusion."
+    result = verify_report_claims(
+        {"answer": f'Retrieved source [complaint:123] says: "{snippet}"'},
+        key_findings=["Defect total: 133 defects."],
+        sql_rows=[],
+        retrieved_sources=[{"id": "complaint:123", "snippet": snippet}],
+    )
+
+    assert result.unsupported == 0
+    assert result.supported == 1
+    assert result.claims[0].status == "supported"
+
+
+def test_claim_verifier_marks_problem_as_user_provided() -> None:
+    result = verify_report_claims(
+        {"problem_description": "There were 999 defects on Line 3."},
+        key_findings=["Defect total: 133 defects on Line 3."],
+        sql_rows=[],
+        retrieved_sources=[],
+    )
+
+    assert result.claims[0].status == "not_checkable"
+    assert result.claims[0].reason == "user-provided"
 
 
 def test_deterministic_fallback_keeps_key_findings_and_relevant_documents() -> None:

@@ -12,6 +12,16 @@ from app.reports.workflow import REPORT_SOURCE_ID_PATTERN, _report_number_tokens
 ClaimStatus = Literal["supported", "unsupported", "not_checkable"]
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|\n+|\s*;\s*")
 _SOURCE_TERMS = re.compile(r"\b(?:recall|complaint|NHTSA)\b", re.IGNORECASE)
+_NUMBER_TOKEN = re.compile(r"(?<![A-Za-z0-9])\d+(?:,\d{3})*(?:\.\d+)?(?![A-Za-z0-9])")
+_PERCENT_SUFFIX = re.compile(r"^\s*(?:%|percent(?:age)?\b)", re.IGNORECASE)
+_UNIT_SUFFIX = re.compile(
+    r"^\s*(?:[A-Za-z-]+\s+){0,3}"
+    r"(?:defects?|counts?|totals?|complaints?|records?|parts?|minutes?|hours?|"
+    r"weeks?|days?|vehicles?|cases?|incidents?)\b",
+    re.IGNORECASE,
+)
+_METRIC_PREFIX = re.compile(r"(?:total|count|rate|percentage|percent)\D{0,12}$", re.IGNORECASE)
+_LOCATION_IDENTIFIER = re.compile(r"\b(?:line|plant)\s*#?\s*\d+\b", re.IGNORECASE)
 
 
 class VerifiedClaim(BaseModel):
@@ -35,49 +45,93 @@ class ClaimVerification(BaseModel):
     claims: list[VerifiedClaim]
 
 
-def _report_claims(report: Any) -> list[str]:
-    """Collect short text statements from report fields without treating metadata as claims."""
+def _report_claims(report: Any) -> list[tuple[str, str]]:
+    """Collect short statements with their origin for field-specific treatment."""
     payload = report.model_dump(mode="python") if hasattr(report, "model_dump") else report
     if not isinstance(payload, dict):
         return []
 
-    values: list[Any] = []
+    values: list[tuple[Any, str]] = []
     for field in (
-        "problem_description", "containment_actions", "corrective_actions",
-        "preventive_actions", "limitations", "answer", "key_findings",
-        "human_review_note",
+        "containment_actions", "corrective_actions", "preventive_actions",
+        "limitations", "answer", "human_review_note",
     ):
-        values.append(payload.get(field))
+        values.append((payload.get(field), field))
+    # Problem descriptions repeat the user-provided issue; they are not independent evidence.
+    values.append((payload.get("problem_description"), "problem_description"))
     hypotheses = payload.get("root_cause_hypotheses", [])
     if isinstance(hypotheses, list):
         for item in hypotheses:
             if not isinstance(item, dict):
                 continue
-            values.append(item.get("hypothesis"))
+            values.append((item.get("hypothesis"), "root_cause_hypothesis"))
             citations = item.get("evidence", [])
             if isinstance(citations, list):
                 values.extend(
-                    f"Evidence citation {citation}"
+                    (f"Evidence citation {citation}", "evidence_citation")
                     for citation in citations
                     if isinstance(citation, str)
                     and REPORT_SOURCE_ID_PATTERN.fullmatch(citation)
                 )
 
-    claims: list[str] = []
+    unique: dict[str, tuple[str, str]] = {}
 
-    def add_text(value: Any) -> None:
+    def add_text(value: Any, origin: str) -> None:
         if isinstance(value, str):
             for piece in _SENTENCE_BOUNDARY.split(value):
                 cleaned = piece.strip().lstrip("-* \u2022").strip()
                 if cleaned:
-                    claims.append(cleaned)
+                    marker = " ".join(cleaned.split()).casefold()
+                    previous = unique.get(marker)
+                    if previous is None or origin == "problem_description":
+                        unique[marker] = (cleaned, origin)
         elif isinstance(value, list):
             for item in value:
-                add_text(item)
+                add_text(item, origin)
 
-    for value in values:
-        add_text(value)
-    return claims
+    for value, origin in values:
+        add_text(value, origin)
+    return list(unique.values())
+
+
+def _metric_numbers(text: str) -> set[str]:
+    """Return only numbers attached to a count, total, or percentage-like metric."""
+    normalized = _LOCATION_IDENTIFIER.sub(" ", text)
+    candidate_numbers = _report_number_tokens(normalized)
+    metrics: set[str] = set()
+    for match in _NUMBER_TOKEN.finditer(normalized):
+        number = match.group().replace(",", "")
+        if number not in candidate_numbers:
+            continue
+        suffix = normalized[match.end():match.end() + 48]
+        prefix = normalized[max(0, match.start() - 24):match.start()]
+        if (
+            _PERCENT_SUFFIX.match(suffix)
+            or _UNIT_SUFFIX.match(suffix)
+            or _METRIC_PREFIX.search(prefix)
+        ):
+            metrics.add(number)
+    return metrics
+
+
+def _remove_retrieved_excerpts(text: str, retrieved_sources: list[dict[str, Any]]) -> str:
+    """Remove quoted or directly included retrieved snippets before metric checks."""
+    cleaned = text
+    snippets = [
+        str(source.get("snippet", "")).strip()
+        for source in retrieved_sources
+        if isinstance(source, dict) and source.get("snippet")
+    ]
+    quote_pattern = re.compile(r"[\"“](.+?)[\"”]")
+    for match in reversed(list(quote_pattern.finditer(cleaned))):
+        quoted = match.group(1)
+        if any(quoted.casefold() in snippet.casefold() for snippet in snippets):
+            cleaned = cleaned[:match.start()] + " " + cleaned[match.end():]
+    for snippet in snippets:
+        excerpt = snippet[:180].strip()
+        if excerpt:
+            cleaned = re.sub(re.escape(excerpt), " ", cleaned, flags=re.IGNORECASE)
+    return cleaned
 
 
 def verify_report_claims(
@@ -96,18 +150,33 @@ def verify_report_claims(
     supported_numbers = {
         number
         for finding in key_findings
-        for number in _report_number_tokens(finding)
+        for number in _metric_numbers(finding)
     }
     source_ids = {
         str(source.get("id"))
         for source in retrieved_sources
         if isinstance(source, dict) and source.get("id") is not None
     }
+    derived_finding_claims = {
+        " ".join(piece.split()).casefold()
+        for finding in key_findings
+        for piece in _SENTENCE_BOUNDARY.split(finding)
+        if piece.strip()
+    }
 
     verified: list[VerifiedClaim] = []
-    for claim in _report_claims(report):
-        numbers = _report_number_tokens(claim)
-        cited_ids = REPORT_SOURCE_ID_PATTERN.findall(claim)
+    for claim, origin in _report_claims(report):
+        if " ".join(claim.split()).casefold() in derived_finding_claims:
+            continue
+        if origin == "problem_description":
+            verified.append(VerifiedClaim(
+                claim=claim, status="not_checkable", reason="user-provided"
+            ))
+            continue
+
+        text_for_metrics = _remove_retrieved_excerpts(claim, retrieved_sources)
+        cited_ids = REPORT_SOURCE_ID_PATTERN.findall(text_for_metrics)
+        numbers = _metric_numbers(text_for_metrics)
         if numbers and any(number not in supported_numbers for number in numbers):
             missing = sorted(number for number in numbers if number not in supported_numbers)
             status: ClaimStatus = "unsupported"

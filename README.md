@@ -195,8 +195,8 @@ are claimed here; fill in this table from the generated `eval/results.json`.
 
 The `/investigate` claim verifier is rule-based. It checks numbers against
 Python-built key findings and checks cited complaint or recall IDs against
-retrieved documents. It does not verify causal reasoning or other factual
-claims; reports still need human review.
+retrieved documents. It does not verify other factual claims; reports still
+need human review. It does not check causal reasoning or confidence levels.
 
 ## How I used AI coding assistants
 
