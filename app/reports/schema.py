@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,9 +16,9 @@ class ReportModel(BaseModel):
 class RootCauseHypothesis(ReportModel):
     """A possible cause with an explicit confidence and gathered evidence IDs."""
 
-    hypothesis: str = Field(min_length=1)
+    hypothesis: str = Field(min_length=1, max_length=240)
     confidence_level: Literal["low", "medium", "high"]
-    evidence: list[str] = Field(min_length=1)
+    evidence: list[str] = Field(min_length=1, max_length=4)
 
 
 class SupportingData(ReportModel):
@@ -41,12 +41,12 @@ class SupportingDocument(ReportModel):
 class ReportDraft(ReportModel):
     """LLM-authored report fields that do not include evidence payloads."""
 
-    problem_description: str = Field(min_length=1)
-    containment_actions: list[str]
-    root_cause_hypotheses: list[RootCauseHypothesis]
-    corrective_actions: list[str]
-    preventive_actions: list[str]
-    limitations: list[str]
+    problem_description: str = Field(min_length=1, max_length=350)
+    containment_actions: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(max_length=3)
+    root_cause_hypotheses: list[RootCauseHypothesis] = Field(max_length=3)
+    corrective_actions: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(max_length=3)
+    preventive_actions: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(max_length=3)
+    limitations: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(max_length=5)
 
 
 class EightDReport(ReportDraft):

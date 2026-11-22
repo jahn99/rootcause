@@ -10,6 +10,7 @@ from app.agents.data_agent import DataAgent
 from app.api.ask import get_retriever
 from app.api.sql_agent import get_data_agent
 from app.llm.factory import create_llm_provider
+from app.llm.groq_provider import GroqRateLimitError, GroqRequestTooLargeError
 from app.reports.schema import EightDReport
 from app.reports.workflow import InvestigationWorkflow, ReportValidationError
 
@@ -48,6 +49,18 @@ async def investigate(
         return await workflow.run(request.issue)
     except ReportValidationError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+    except GroqRequestTooLargeError as error:
+        logger.warning("Groq rejected report evidence after compaction")
+        raise HTTPException(
+            status_code=502,
+            detail="The LLM provider could not process the compact report evidence. Try a narrower issue.",
+        ) from error
+    except GroqRateLimitError as error:
+        logger.warning("Groq rate limit persisted after retry")
+        raise HTTPException(
+            status_code=503,
+            detail="The LLM provider is rate limited. Please retry shortly.",
+        ) from error
     except Exception as error:
         logger.exception("Unexpected error while investigating issue")
         error_text = str(error).casefold()

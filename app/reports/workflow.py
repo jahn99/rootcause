@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Protocol, TypedDict
@@ -22,6 +23,7 @@ from app.reports.schema import (
 )
 
 REPORT_DRAFT_SCHEMA = ReportDraft.model_json_schema()
+REPORT_EVIDENCE_TOKEN_BUDGET = 3500
 logger = logging.getLogger(__name__)
 PLANTS = ("Cedar Falls", "Lakeview", "Pine Ridge", "Stuttgart")
 PART_PATTERNS = (
@@ -58,6 +60,12 @@ PART_RETRIEVAL_TERMS = {
     "fuel system": "fuel leak fuel line pump fire",
     "steering system": "steering loss control power steering",
     "electrical system": "electrical wiring short circuit fire",
+}
+DOCUMENT_METADATA_KEYS = {
+    "vehicle", "vin", "manufacturer", "make", "model", "modelyear", "model year",
+    "product", "component", "components", "odi number", "odinumber", "nhtsa campaign number",
+    "nhtsaid", "crash", "fire", "numberofinjuries", "numberofdeaths",
+    "dateofincident", "datecomplaintfiled", "reportreceiveddate", "reportdate",
 }
 
 
@@ -169,6 +177,106 @@ def _retrieval_query(context: TriageContext) -> str:
     )
 
 
+def clean_document_snippet(content: str, max_characters: int = 500) -> str:
+    """Remove record metadata and raw product dictionaries from a document excerpt."""
+    try:
+        raw = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        raw = None
+    if isinstance(raw, dict):
+        content = "\n".join(
+            f"{key}: {value}"
+            for key, value in raw.items()
+            if str(key).casefold().replace("_", " ") not in DOCUMENT_METADATA_KEYS
+            and isinstance(value, (str, int, float))
+        )
+
+    useful_lines: list[str] = []
+    for line in content.splitlines():
+        key, separator, _ = line.partition(":")
+        normalized_key = key.strip().casefold().replace("_", " ")
+        if separator and normalized_key in DOCUMENT_METADATA_KEYS:
+            continue
+        if line.strip().startswith(("{", "}", "[", "]")):
+            continue
+        if line.strip():
+            useful_lines.append(line.strip())
+    return " ".join(useful_lines)[:max_characters]
+
+
+def estimate_tokens(value: Any) -> int:
+    """Estimate token count conservatively from compact JSON or text length."""
+    serialized = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    )
+    return math.ceil(len(serialized) / 3.5)
+
+
+def _compact_row_value(value: Any) -> Any:
+    """Bound unusual nested SQL values before sending them to the report model."""
+    if isinstance(value, str):
+        return value[:200]
+    if isinstance(value, (dict, list, tuple)):
+        serialized = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+        return serialized[:200]
+    return value
+
+
+def prepare_report_evidence(
+    triage: dict[str, Any],
+    sql_data: list[SupportingData],
+    documents: list[SupportingDocument],
+    limitations: list[str],
+    token_budget: int = REPORT_EVIDENCE_TOKEN_BUDGET,
+) -> tuple[dict[str, Any], int]:
+    """Trim and normalize evidence to the report agent's prompt budget."""
+    evidence: dict[str, Any] = {
+        "triage": {
+            key: triage.get(key)
+            for key in ("part", "plant", "line", "start_date", "end_date")
+            if triage.get(key) is not None
+        },
+        "sql_results": [
+            {"id": item.id, "rows": item.rows[:20]}
+            for item in sql_data[:3]
+        ],
+        "documents": [
+            {"id": item.id, "snippet": clean_document_snippet(item.snippet, 500)}
+            for item in documents[:4]
+        ],
+        "limitations": [item[:200] for item in limitations[:5]],
+    }
+    for rowset in evidence["sql_results"]:
+        rowset["rows"] = [
+            {
+                str(key)[:80]: _compact_row_value(value)
+                for key, value in row.items()
+            }
+            for row in rowset["rows"]
+        ]
+
+    token_count = estimate_tokens(evidence)
+    while token_count > token_budget:
+        snippets = [item["snippet"] for item in evidence["documents"] if item["snippet"]]
+        if snippets and max(map(len, snippets)) > 100:
+            for item in evidence["documents"]:
+                item["snippet"] = item["snippet"][: max(100, len(item["snippet"]) - 100)]
+        elif len(evidence["documents"]) > 1:
+            evidence["documents"].pop()
+        elif any(len(rowset["rows"]) > 1 for rowset in evidence["sql_results"]):
+            for rowset in evidence["sql_results"]:
+                if len(rowset["rows"]) > 1:
+                    rowset["rows"] = rowset["rows"][: max(1, len(rowset["rows"]) - 5)]
+        elif evidence["limitations"]:
+            evidence["limitations"].pop()
+        else:
+            raise ValueError("The required report context exceeds its evidence token budget")
+        token_count = estimate_tokens(evidence)
+    return evidence, token_count
+
+
 class InvestigationWorkflow:
     """Run parallel SQL and document retrieval after triage, then draft an 8D report."""
 
@@ -177,7 +285,7 @@ class InvestigationWorkflow:
         data_agent: DataAgent,
         knowledge_retriever: KnowledgeRetriever,
         llm: LLMProvider,
-        top_k_documents: int = 3,
+        top_k_documents: int = 4,
     ) -> None:
         self.data_agent = data_agent
         self.knowledge_retriever = knowledge_retriever
@@ -212,10 +320,9 @@ class InvestigationWorkflow:
         if context.part and (context.plant is None or context.start_date is None):
             filters = f"part {context.part}"
             questions = [
-                f"For {filters}, count production defects grouped by plant and line across the full date range available in the database. Include all dates and order by count descending.",
+                f"For {filters}, count defects and calculate average severity grouped by plant and line across the full date range available in the database. Include all dates and order by count descending.",
                 f"For {filters} on line {context.line if context.line is not None else 'all lines'}, show weekly defect counts across the full date range available in the database. Include all dates.",
-                f"For {filters}, calculate average severity and defect count by plant and line across the full date range available in the database. Include all dates.",
-                f"Show downtime minutes by plant, line, and reason related to {filters} across the full date range available in the database. Include all dates.",
+                f"Show downtime minutes by plant, line, and reason mentioning {filters} across the full date range available in the database. Include all dates.",
             ]
 
         gathered: list[dict[str, Any]] = []
@@ -274,22 +381,23 @@ class InvestigationWorkflow:
                     and "tail light" not in chunk.content.casefold()
                 )
             ]
-        documents = [
-            SupportingDocument(
-                id=f"{chunk.source_type}:{chunk.source_id}",
-                source_type=chunk.source_type,
-                snippet=chunk.content[:300],
-                date=chunk.record_date.isoformat() if chunk.record_date else None,
-            ).model_dump(mode="json")
-            for chunk in chunks
-        ]
+        documents = []
+        for chunk in chunks:
+            snippet = clean_document_snippet(chunk.content, 500)
+            if not snippet:
+                continue
+            documents.append(
+                SupportingDocument(
+                    id=f"{chunk.source_type}:{chunk.source_id}",
+                    source_type=chunk.source_type,
+                    snippet=snippet,
+                    date=chunk.record_date.isoformat() if chunk.record_date else None,
+                ).model_dump(mode="json")
+            )
         logger.debug(
-            "8D retrieval query=%r top_chunks=%s",
+            "8D retrieval query=%r top_chunk_ids=%s",
             question,
-            [
-                {"id": item["id"], "snippet": item["snippet"][:180]}
-                for item in documents
-            ],
+            [item["id"] for item in documents],
         )
         return {
             "supporting_documents": documents,
@@ -297,39 +405,47 @@ class InvestigationWorkflow:
         }
 
     async def _report_agent_node(self, state: WorkflowState) -> dict[str, Any]:
-        sql_data = [SupportingData.model_validate(item) for item in state.get("supporting_data", [])]
+        raw_sql_data = [SupportingData.model_validate(item) for item in state.get("supporting_data", [])]
         documents = [
             SupportingDocument.model_validate(item)
-            for item in state.get("supporting_documents", [])
+            for item in state.get("supporting_documents", [])[:4]
         ]
-        evidence_ids = sorted(
-            {item.id for item in sql_data if item.rows} | {item.id for item in documents}
-        )
-        evidence = {
-            "triage": state.get("triage", {}),
-            "sql_results": [
-                {"id": item.id, "rows": item.rows}
-                for item in sql_data
-            ],
-            "nhtsa_documents": [item.model_dump(mode="json") for item in documents],
-        }
+        raw_sql_data = raw_sql_data[:3]
         limitations = [
             item
             for item in (state.get("data_limitation", ""), state.get("knowledge_limitation", ""))
             if item
         ]
-        if not evidence_ids:
+        if not any(item.rows for item in raw_sql_data) and not documents:
             limitations.append("insufficient evidence to identify or confirm a root cause.")
-        if not sql_data or not any(item.rows for item in sql_data):
+        if not raw_sql_data or not any(item.rows for item in raw_sql_data):
             limitations.append("No manufacturing data rows were found for the issue.")
-        evidence["limitations"] = limitations
+        evidence, evidence_tokens = prepare_report_evidence(
+            state.get("triage", {}), raw_sql_data, documents, limitations
+        )
+        logger.debug("8D estimated report prompt evidence tokens=%d", evidence_tokens)
+
+        sql_by_id = {item.id: item for item in raw_sql_data}
+        sql_data = [
+            sql_by_id[item["id"]].model_copy(update={"rows": item["rows"]})
+            for item in evidence["sql_results"]
+        ]
+        document_by_id = {item.id: item for item in documents}
+        documents = [
+            document_by_id[item["id"]].model_copy(update={"snippet": item["snippet"]})
+            for item in evidence["documents"]
+        ]
+        evidence_ids = sorted(
+            {item.id for item in sql_data if item.rows} | {item.id for item in documents}
+        )
 
         base_prompt = (
             "Draft a concise automotive 8D report using ONLY the gathered evidence JSON below. "
             "Do not invent causes, measurements, facts, or recall numbers. Every root-cause "
             "hypothesis must cite one or more exact IDs from the allowed evidence IDs. "
             "If evidence does not support a cause, provide no hypothesis and include the exact "
-            "phrase 'insufficient evidence' in limitations. Keep actions evidence-based. "
+            "phrase 'insufficient evidence' in limitations. Use at most three short items in each "
+            "action section and at most three hypotheses. Keep each item to one short sentence. "
             "This is a draft for human review. Return only JSON matching the provided schema.\n\n"
             f"Issue: {state['issue']}\nAllowed evidence IDs: {evidence_ids}\n"
             f"Gathered evidence: {json.dumps(evidence, ensure_ascii=False, default=str)}"
@@ -341,10 +457,26 @@ class InvestigationWorkflow:
             if validation_error:
                 prompt += f"\n\nThe prior report failed validation: {validation_error}. Correct it."
             try:
+                logger.debug(
+                    "8D estimated prompt tokens=%d (evidence=%d)",
+                    estimate_tokens(prompt) + estimate_tokens(REPORT_DRAFT_SCHEMA),
+                    evidence_tokens,
+                )
                 raw = await self.llm.generate_json(prompt, REPORT_DRAFT_SCHEMA)
                 draft = ReportDraft.model_validate_json(raw)
                 report_fields = draft.model_dump()
-                report_fields["limitations"] = list(dict.fromkeys(draft.limitations + limitations))
+                combined_limitations = list(dict.fromkeys(draft.limitations + limitations))
+                combined_limitations = [item[:200] for item in combined_limitations]
+                if not evidence_ids and not any("insufficient evidence" in item.lower() for item in combined_limitations):
+                    combined_limitations.insert(0, "insufficient evidence to identify or confirm a root cause.")
+                if len(combined_limitations) > 5:
+                    priority = [
+                        item for item in combined_limitations
+                        if "insufficient evidence" in item.lower()
+                        or "no manufacturing data rows" in item.lower()
+                    ]
+                    combined_limitations = list(dict.fromkeys(priority + combined_limitations))[:5]
+                report_fields["limitations"] = combined_limitations
                 report = EightDReport(
                     **report_fields,
                     supporting_data=sql_data,

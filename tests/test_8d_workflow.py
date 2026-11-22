@@ -11,8 +11,15 @@ from pydantic import ValidationError
 from app.agents.data_agent import DataAgentResult
 from app.api.investigate import get_investigation_workflow
 from app.main import app
-from app.reports.schema import EightDReport
-from app.reports.workflow import InvestigationWorkflow, ReportValidationError, triage_issue
+from app.reports.schema import EightDReport, SupportingData, SupportingDocument
+from app.reports.workflow import (
+    REPORT_EVIDENCE_TOKEN_BUDGET,
+    InvestigationWorkflow,
+    ReportValidationError,
+    estimate_tokens,
+    prepare_report_evidence,
+    triage_issue,
+)
 
 
 def sample_draft() -> dict[str, object]:
@@ -180,13 +187,13 @@ def test_workflow_without_plant_or_dates_runs_part_overviews() -> None:
     workflow, data_agent, retriever, _ = build_workflow()
     report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
 
-    assert len(data_agent.questions) == 4
+    assert len(data_agent.questions) == 3
     assert any("grouped by plant and line" in item for item in data_agent.questions)
     assert any("weekly defect counts" in item for item in data_agent.questions)
     assert any("average severity" in item for item in data_agent.questions)
     assert any("downtime minutes" in item for item in data_agent.questions)
     assert "door seal weatherstrip water leak wind noise" in retriever.query
-    assert len(report.supporting_data) == 4
+    assert len(report.supporting_data) == 3
     assert report.supporting_documents[0].id == "complaint:123"
 
 
@@ -226,6 +233,43 @@ def test_no_results_are_reported_as_limitations() -> None:
     assert not report.supporting_data or not any(item.rows for item in report.supporting_data)
     assert any("no manufacturing data rows" in item.lower() for item in report.limitations)
     assert any("insufficient evidence" in item.lower() for item in report.limitations)
+
+
+def test_oversized_evidence_is_compacted_to_token_budget() -> None:
+    sql_data = [
+        SupportingData(
+            id=f"sql:{query_index}",
+            sql="SELECT ...",
+            rows=[{"plant": "Cedar Falls", "details": "x" * 200} for _ in range(30)],
+        )
+        for query_index in range(5)
+    ]
+    documents = [
+        SupportingDocument(
+            id=f"complaint:{index}",
+            source_type="complaint",
+            snippet=("Vehicle: large raw product dictionary " + "x" * 1000 + "\nSummary: seal wind noise " + "y" * 800),
+            date="2025-01-01",
+        )
+        for index in range(7)
+    ]
+
+    evidence, token_count = prepare_report_evidence(
+        {"part": "door seal", "plant": "Cedar Falls", "unused": "z" * 1000},
+        sql_data,
+        documents,
+        ["limitation"] * 8,
+    )
+
+    assert token_count == estimate_tokens(evidence)
+    assert token_count <= REPORT_EVIDENCE_TOKEN_BUDGET
+    assert len(evidence["sql_results"]) <= 3
+    assert all(len(item["rows"]) <= 20 for item in evidence["sql_results"])
+    assert len(evidence["documents"]) <= 4
+    assert all(len(item["snippet"]) <= 500 for item in evidence["documents"])
+    assert "source_type" not in evidence["documents"][0]
+    assert "date" not in evidence["documents"][0]
+    assert "unused" not in evidence["triage"]
 
 
 def test_report_validation_retries_once_then_returns_validated_report() -> None:
