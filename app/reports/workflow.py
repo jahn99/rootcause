@@ -77,6 +77,24 @@ DOCUMENT_METADATA_KEYS = {
     "dateofincident", "datecomplaintfiled", "reportreceiveddate", "reportdate",
 }
 REPORT_NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])\d+(?:,\d{3})*(?:\.\d+)?(?![A-Za-z0-9])")
+REPORT_SOURCE_ID_PATTERN = re.compile(
+    r"\b(?:complaint|recall):[A-Za-z0-9][A-Za-z0-9-]*\b", re.IGNORECASE
+)
+REPORT_NHTSA_ID_PATTERN = re.compile(
+    r"\b(?:ODI\s*Number|NHTSA\s*Campaign\s*Number|NHTSAID)\b"
+    r"\s*[:#]?\s*[A-Za-z0-9][A-Za-z0-9-]*",
+    re.IGNORECASE,
+)
+REPORT_MONTH_PATTERN = (
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+)
+REPORT_MONTH_DAY_PATTERN = re.compile(
+    rf"\b(?:{REPORT_MONTH_PATTERN})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?"
+    rf"(?:,?\s+20\d{{2}})?\b|\b\d{{1,2}}(?:st|nd|rd|th)?\s+"
+    rf"(?:{REPORT_MONTH_PATTERN})\.?(?:,?\s+20\d{{2}})?\b",
+    re.IGNORECASE,
+)
 
 
 class TriageContext(BaseModel):
@@ -303,8 +321,9 @@ def _unsupported_report_numbers(
 ) -> list[str]:
     """Find numeric claims in prose that are absent from Python-computed findings."""
     allowed = {
-        value.replace(",", "")
-        for value in REPORT_NUMBER_PATTERN.findall(" ".join(key_findings))
+        number
+        for finding in key_findings
+        for number in _report_number_tokens(finding)
     }
     prose: list[str] = []
     for key in (
@@ -323,13 +342,27 @@ def _unsupported_report_numbers(
             for item in hypotheses
             if isinstance(item, dict)
         )
-    return sorted(
-        {
-            value.replace(",", "")
-            for value in REPORT_NUMBER_PATTERN.findall(" ".join(prose))
-            if value.replace(",", "") not in allowed
-        }
-    )
+    unsupported = {
+        number
+        for item in prose
+        for number in _report_number_tokens(item)
+        if number not in allowed
+    }
+    return sorted(unsupported)
+
+
+def _report_number_tokens(text: str) -> set[str]:
+    """Extract metric numbers while excluding dates, years, and known NHTSA IDs."""
+    normalized = REPORT_SOURCE_ID_PATTERN.sub(" ", text)
+    normalized = REPORT_NHTSA_ID_PATTERN.sub(" ", normalized)
+    normalized = ISO_DATE_PATTERN.sub(" ", normalized)
+    normalized = DAY_RANGE_PATTERN.sub(" ", normalized)
+    normalized = REPORT_MONTH_DAY_PATTERN.sub(" ", normalized)
+    normalized = YEAR_PATTERN.sub(" ", normalized)
+    return {
+        value.replace(",", "")
+        for value in REPORT_NUMBER_PATTERN.findall(normalized)
+    }
 
 
 def _parse_date(raw: str) -> date | None:

@@ -16,6 +16,7 @@ from app.reports.schema import EightDReport, SupportingData, SupportingDocument
 from app.reports.workflow import (
     REPORT_EVIDENCE_TOKEN_BUDGET,
     InvestigationWorkflow,
+    _unsupported_report_numbers,
     build_key_findings,
     deterministic_fallback_report,
     estimate_tokens,
@@ -338,6 +339,48 @@ def test_key_findings_cover_window_total_peak_downtime_and_top_part() -> None:
     assert any("2025-05-12: 91 defects" in item for item in findings)
     assert any("714 minutes total" in item and "180.0 minutes per week" in item for item in findings)
     assert any("door seal with 457 defects" in item for item in findings)
+
+
+def test_numeric_consistency_ignores_known_dates_years_and_record_ids() -> None:
+    report_fields = {
+        "problem_description": (
+            "On May 5 and May 5, 2025 (2025-05-05), records show 133 defects. "
+            "Between 5 and 18 May 2025, the peak was 91 defects. "
+            "ODI Number: 11749412; complaint:11749412; "
+            "NHTSA Campaign Number: 21V123000; recall:F-150-2021-4. "
+            "The measured defect rate was 8%."
+        ),
+    }
+    key_findings = [
+        "Defect total: 133 defects.",
+        "Peak week: 91 defects.",
+        "Defect rate: 8%.",
+    ]
+
+    assert _unsupported_report_numbers(report_fields, key_findings) == []
+
+
+def test_workflow_accepts_supported_counts_with_dates_and_nhtsa_record_ids() -> None:
+    draft = sample_draft()
+    draft["problem_description"] = (
+        "On May 5, 2025 (2025-05-05), records show 133 defects. "
+        "Between 5 and 18 May 2025, the peak week had 91 defects. "
+        "The top part had 457 defects. ODI Number: 11749412; "
+        "complaint:123; recall:F-150-2021-4."
+    )
+    llm = FakeLLM([json.dumps(draft)])
+    workflow, _, _, _ = build_workflow(llm)
+
+    asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
+
+    assert len(llm.prompts) == 1
+
+
+def test_numeric_consistency_still_rejects_unsupported_count_and_percentage() -> None:
+    report_fields = {"problem_description": "The issue caused 999 defects and a 9% reject rate."}
+    key_findings = ["The data shows 133 defects and an 8% reject rate."]
+
+    assert _unsupported_report_numbers(report_fields, key_findings) == ["9", "999"]
 
 
 def test_deterministic_fallback_keeps_key_findings_and_relevant_documents() -> None:
