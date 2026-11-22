@@ -17,6 +17,8 @@ Cited sources: [{"id": "complaint:11522580", "snippet": "the door using the inne
 
 **Expected value:** `{"expected_keywords": ["seal", "water", "leak"]}`
 
+**Root cause category:** retrieval
+
 **Why it failed:** Answer keyword hit rate was 0%; matched []. Cited-source keyword hit: False.
 
 ## Q03 (doc)
@@ -32,6 +34,8 @@ Cited sources: [{"id": "complaint:11577254", "snippet": "happening again on thes
 
 **Expected value:** `{"expected_keywords": ["water", "leak"]}`
 
+**Root cause category:** LLM output
+
 **Why it failed:** Answer keyword hit rate was 0%; matched []. Cited-source keyword hit: True.
 
 ## Q06 (doc)
@@ -42,10 +46,12 @@ Cited sources: [{"id": "complaint:11577254", "snippet": "happening again on thes
 
 ```text
 Answer: not found in the documents
-Cited sources: [{"id": "complaint:11759493", "snippet": "\"See Dealer.\" 3. The power door locks repeatedly click and cycle as though they are attempting to lock or unlock on their own. 4. The stereo, on its own, scrolls through buttons and bluetooth blinking through all the stereo options on its own. 5.An OBD diagnostic code reader is unable to properly communicate with the vehicle and reports \"Unable to Connect/Ve"}, {"id": "complaint:11568290", "snippet": "diagnosis and report the unsafety incident that occurred with absolutely no warning lamps. Inspection lead to repair of engine but nothing done about no warning lamps/electrical system products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'MERCEDES-BENZ', 'productModel': 'C300', 'manufacturer': 'Mercedes-Benz USA, LLC'}"}, {"id": "complaint:11759493", "snippet": "vehicle system defect rather than ordinary wear and tear. I am particularly concerned because the dashboard warnings involve vehicle systems that may affect braking, steering, stability control, driver-assistance features, and other safety functions. When numerous safety warnings illuminate at the same time, I have no reliable way of knowing which vehicle sy"}, {"id": "complaint:11726673", "snippet": "manufacturer had exceeded a reasonable amount of time for the recall repair. The contact had not experienced a failure. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}, {"id": "complaint:11726494", "snippet": "part to do the recall repair was not yet available. The contact had not experienced a failure. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}]
+Cited sources: [{"id": "complaint:11759493", "snippet": "\"See Dealer.\" 3. The power door locks repeatedly click and cycle as though they are attempting to lock or unlock on their own. 4. The stereo, on its own, scrolls through buttons and bluetooth blinking through all the stereo options on its own. 5.An OBD diagnostic code reader is unable to properly communicate with the vehicle and reports \"Unable to Connect/Ve"}, {"id": "complaint:11568290", "snippet": "diagnosis and report the unsafety incident that occurred with absolutely no warning lamps. Inspection lead to repair of engine but nothing done about no warning lamps/electrical system products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'vehicle manufacturer', 'productModel': 'C300', 'manufacturer': 'vehicle manufacturer'}"}, {"id": "complaint:11759493", "snippet": "vehicle system defect rather than ordinary wear and tear. I am particularly concerned because the dashboard warnings involve vehicle systems that may affect braking, steering, stability control, driver-assistance features, and other safety functions. When numerous safety warnings illuminate at the same time, I have no reliable way of knowing which vehicle sy"}, {"id": "complaint:11726673", "snippet": "manufacturer had exceeded a reasonable amount of time for the recall repair. The contact had not experienced a failure. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}, {"id": "complaint:11726494", "snippet": "part to do the recall repair was not yet available. The contact had not experienced a failure. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'TOYOTA', 'productModel': 'CAMRY', 'manufacturer': 'Toyota Motor Corporation'}"}]
 ```
 
 **Expected value:** `{"expected_keywords": ["wiring", "short"]}`
+
+**Root cause category:** retrieval
 
 **Why it failed:** Answer keyword hit rate was 0%; matched []. Cited-source keyword hit: False.
 
@@ -56,12 +62,14 @@ Cited sources: [{"id": "complaint:11759493", "snippet": "\"See Dealer.\" 3. The 
 **Actual response:**
 
 ```text
-Answer: {"defect_count": 0}
-SQL: SELECT COUNT(*) AS defect_count FROM public.production_defects WHERE defect_type = 'door-seal' AND plant = 'Cedar Falls' AND line = 3 AND date BETWEEN '2025-05-05' AND '2025-05-18' LIMIT 100
-Rows: [{"defect_count": 0}]
+Answer: 0 door-seal defects were logged.
+SQL: SELECT COUNT(*) AS door_seal_count FROM public.production_defects WHERE plant = 'Cedar Falls' AND line = 3 AND defect_type = 'door-seal' AND date BETWEEN '2025-05-05' AND '2025-05-18' LIMIT 100
+Rows: [{"door_seal_count": 0}]
 ```
 
 **Expected value:** `{"expected_answer": "133 door-seal defects.", "expected_values": [133]}`
+
+**Root cause category:** SQL
 
 **Why it failed:** Expected SQL values missing from returned rows: [133].
 
@@ -72,14 +80,16 @@ Rows: [{"defect_count": 0}]
 **Actual response:**
 
 ```text
-Answer: The average severity for door‑seal defects (3.21) is higher than the averages for brake caliper (2.69), instrument panel (2.71), seat frame (2.74), and wire harness (2.64).
-SQL: SELECT part, AVG(severity) AS avg_severity FROM public.production_defects WHERE date >= '2025-01-01' AND date <= '2025-12-31' GROUP BY part ORDER BY part LIMIT 100
-Rows: [{"part": "brake caliper", "avg_severity": 2.692982456140351}, {"part": "door seal", "avg_severity": 3.2056892778993435}, {"part": "instrument panel", "avg_severity": 2.7096774193548385}, {"part": "seat frame", "avg_severity": 2.7420289855072464}, {"part": "wire harness", "avg_severity": 2.638157894736842}]
+Answer: No records were found.
+SQL: SELECT CASE WHEN part = 'door-seal' THEN 'door-seal' ELSE 'other' END AS part_category, AVG(severity) AS avg_severity FROM public.production_defects WHERE date >= '2025-01-01' AND date <= '2025-12-31' GROUP BY part_category LIMIT 100
+Rows: [{"part_category": "other", "avg_severity": 2.8272778088317496}]
 ```
 
 **Expected value:** `{"expected_answer": "Door-seal defects: average severity 3.206 (457 defects); other parts: 2.697 (1,332 defects).", "expected_values": [3.206, 2.697]}`
 
-**Why it failed:** Expected SQL values missing from returned rows: [2.697].
+**Root cause category:** SQL
+
+**Why it failed:** Expected SQL values missing from returned rows: [3.206, 2.697].
 
 ## Q14 (combined)
 
@@ -88,14 +98,16 @@ Rows: [{"part": "brake caliper", "avg_severity": 2.692982456140351}, {"part": "d
 **Actual response:**
 
 ```text
-Report summary: problem_description: "Increase in door-seal defects at Cedar Falls Line 3 on 18 May 2025."
-root_cause_hypotheses: [{"hypothesis": "Higher defect severity linked to requested part group.", "confidence_level": "medium", "evidence": ["sql:severity_comparison"]}, {"hypothesis": "Defect spike may be due to specific plant line configuration.", "confidence_level": "low", "evidence": ["sql:defects_by_plant_line"]}]
-limitations: ["Insufficient evidence to quantify severity increase beyond reported defect count.", "No supporting NHTSA documents were retrieved."]
-supporting_data: [{"id": "sql:weekly_defects", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-18", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-12T00:00:00+00:00", "defect_count": 16}]}, {"id": "sql:defects_by_plant_line", "sql": "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY plant, line ORDER BY defect_count DESC, plant, line LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-18", "end_date": "2025-05-18"}, "rows": [{"plant": "Cedar Falls", "line": 3, "defect_count": 16}, {"plant": "Pine Ridge", "line": 3, "defect_count": 1}, {"plant": "Pine Ridge", "line": 4, "defect_count": 1}]}, {"id": "sql:severity_comparison", "sql": "SELECT part, AVG(severity) AS average_severity, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY part LIMIT 100", "parameters": {"start_date": "2025-05-18", "end_date": "2025-05-18"}, "rows": [{"part_group": "requested part", "average_severity": 4.0, "defect_count": 18}, {"part_group": "all other parts", "average_severity": 2.38, "defect_count": 8}]}, {"id": "sql:weekly_downtime", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, SUM(minutes) AS downtime_minutes FROM downtime_events WHERE plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"start_date": "2025-05-18", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-12T00:00:00+00:00", "downtime_minutes": 77}]}]
+Report summary: problem_description: "Door‑seal defect rate rose from 42 to 91 units between May 5 and May 12, 2025 on Cedar Falls Line 3."
+root_cause_hypotheses: [{"hypothesis": "Defect count doubled between the two weeks, indicating a process change or material issue.", "confidence_level": "high", "evidence": ["sql:weekly_defects"]}, {"hypothesis": "Higher average severity for requested parts suggests a quality issue affecting door‑seal components.", "confidence_level": "medium", "evidence": ["sql:severity_comparison"]}]
+limitations: ["No supporting NHTSA documents were retrieved.", "insufficient evidence for NHTSA complaints."]
+supporting_data: [{"id": "sql:weekly_defects", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "defect_count": 42}, {"week": "2025-05-12T00:00:00+00:00", "defect_count": 91}]}, {"id": "sql:defects_by_plant_line", "sql": "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY plant, line ORDER BY defect_count DESC, plant, line LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"plant": "Cedar Falls", "line": 3, "defect_count": 133}, {"plant": "Lakeview", "line": 4, "defect_count": 7}, {"plant": "Lakeview", "line": 3, "defect_count": 4}, {"plant": "Pine Ridge", "line": 4, "defect_count": 3}, {"plant": "Cedar Falls", "line": 2, "defect_count": 2}, {"plant": "Lakeview", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 3, "defect_count": 2}, {"plant": "Cedar Falls", "line": 1, "defect_count": 1}, {"plant": "Pine Ridge", "line": 2, "defect_count": 1}]}, {"id": "sql:severity_comparison", "sql": "SELECT part, AVG(severity) AS average_severity, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY part LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"part_group": "requested part", "average_severity": 3.85, "defect_count": 157}, {"part_group": "all other parts", "average_severity": 2.83, "defect_count": 102}]}, {"id": "sql:weekly_downtime", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, SUM(minutes) AS downtime_minutes FROM downtime_events WHERE plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "downtime_minutes": 259}, {"week": "2025-05-12T00:00:00+00:00", "downtime_minutes": 455}]}]
 supporting_documents: []
 ```
 
 **Expected value:** `{"expected_keywords": ["seal", "133"]}`
+
+**Root cause category:** retrieval
 
 **Why it failed:** Combined check requires data and citations; data evidence=True, document citations=False.
 
@@ -106,16 +118,17 @@ supporting_documents: []
 **Actual response:**
 
 ```text
-Report summary: problem_description: "The highest production defect count across all plants and lines during 2025 cannot be determined from the available data; no manufacturing data rows were found."
-root_cause_hypotheses: [{"hypothesis": "Defective display integration may lead to high defect rates.", "confidence_level": "medium", "evidence": ["complaint:11768740"]}]
-limitations: ["No matching part value was found in the production data.", "No manufacturing data rows were found for the issue."]
-supporting_data: []
-supporting_documents: [{"id": "complaint:11768740", "source_type": "complaint", "snippet": "the vehicle is available for inspection. I am submitting this complaint because the defect can create significant driver distraction and affects a display that is integrated with important vehicle functions. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'HONDA', 'productModel': 'ACCORD', 'manufacturer': 'Honda (American Honda Motor Co.)'}", "date": null}, {"id": "complaint:11712287", "source_type": "complaint", "snippet": "because it can distract the driver, allow water intrusion that may affect electrical components, and/or cause sudden glass or mechanical failure while driving. The vehicle has been taken to a Mercedes-Benz dealership for diagnosis and the issue was not resolved due to denied coverage. I was informed that the repair would be costly despite the issue appearing to be a known defect in Mercedes-Benz panoramic sunroof systems. I believe this defect may affect other Mercedes-Benz vehicles with panoram", "date": null}, {"id": "complaint:11623957", "source_type": "complaint", "snippet": "driving. Replacement part indefinitely back ordered. Local and corporate uncooperative in answering questions regarding safety concerns. Touchscreen unresponsive frequently. products: {'type': 'Vehicle', 'productYear': '2021', 'productMake': 'HONDA', 'productModel': 'ACCORD', 'manufacturer': 'Honda (American Honda Motor Co.)'}", "date": null}]
+Report summary: problem_description: "Highest defect count part in 2025 is door seal with 457 defects; no related NHTSA recalls found."
+limitations: ["insufficient evidence", "No supporting NHTSA documents were retrieved."]
+supporting_data: [{"id": "sql:top_parts", "sql": "SELECT part, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY defect_count DESC, part LIMIT 100", "parameters": {"start_date": "2025-01-01", "end_date": "2025-12-31"}, "rows": [{"part": "door seal", "defect_count": 457}, {"part": "seat frame", "defect_count": 345}, {"part": "brake caliper", "defect_count": 342}, {"part": "instrument panel", "defect_count": 341}, {"part": "wire harness", "defect_count": 304}]}]
+supporting_documents: []
 ```
 
 **Expected value:** `{"expected_keywords": ["door seal", "recall"]}`
 
-**Why it failed:** Combined check requires data and citations; data evidence=False, document citations=True.
+**Root cause category:** retrieval
+
+**Why it failed:** Combined check requires data and citations; data evidence=True, document citations=False.
 
 ## Q16 (combined)
 
@@ -124,13 +137,15 @@ supporting_documents: [{"id": "complaint:11768740", "source_type": "complaint", 
 **Actual response:**
 
 ```text
-Report summary: problem_description: "Door‑seal defects at Cedar Falls Line 3 on 18 May 2025 coincided with a high defect count of 16 and recorded downtime of 77 minutes."
-root_cause_hypotheses: [{"hypothesis": "Higher defect count at Cedar Falls Line 3 caused increased downtime.", "confidence_level": "high", "evidence": ["sql:defects_by_plant_line", "sql:weekly_downtime"]}, {"hypothesis": "Door‑seal defects exceeded typical severity, contributing to downtime.", "confidence_level": "medium", "evidence": ["sql:severity_comparison", "sql:weekly_defects"]}]
-limitations: ["No supporting NHTSA documents were retrieved.", "Insufficient evidence to confirm public complaint correlation."]
-supporting_data: [{"id": "sql:weekly_defects", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-18", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-12T00:00:00+00:00", "defect_count": 16}]}, {"id": "sql:defects_by_plant_line", "sql": "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY plant, line ORDER BY defect_count DESC, plant, line LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-18", "end_date": "2025-05-18"}, "rows": [{"plant": "Cedar Falls", "line": 3, "defect_count": 16}, {"plant": "Pine Ridge", "line": 3, "defect_count": 1}, {"plant": "Pine Ridge", "line": 4, "defect_count": 1}]}, {"id": "sql:severity_comparison", "sql": "SELECT part, AVG(severity) AS average_severity, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY part LIMIT 100", "parameters": {"start_date": "2025-05-18", "end_date": "2025-05-18"}, "rows": [{"part_group": "requested part", "average_severity": 4.0, "defect_count": 18}, {"part_group": "all other parts", "average_severity": 2.38, "defect_count": 8}]}, {"id": "sql:weekly_downtime", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, SUM(minutes) AS downtime_minutes FROM downtime_events WHERE plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"start_date": "2025-05-18", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-12T00:00:00+00:00", "downtime_minutes": 77}]}]
+Report summary: problem_description: "The door seal defect count spiked at Cedar Falls Line 3 between May 5–18 2025 and appears linked to increased downtime, but public complaints are not documented."
+root_cause_hypotheses: [{"hypothesis": "Defect spike coincides with a rise in downtime during the same weeks.", "confidence_level": "high", "evidence": ["sql:weekly_defects", "sql:weekly_downtime"]}, {"hypothesis": "Cedar Falls Line 3 had a disproportionately high defect count compared to other lines.", "confidence_level": "medium", "evidence": ["sql:defects_by_plant_line"]}, {"hypothesis": "Door seal defects have a higher average severity than other parts.", "confidence_level": "medium", "evidence": ["sql:severity_comparison"]}]
+limitations: ["No supporting NHTSA documents were retrieved.", "insufficient evidence"]
+supporting_data: [{"id": "sql:weekly_defects", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "defect_count": 42}, {"week": "2025-05-12T00:00:00+00:00", "defect_count": 91}]}, {"id": "sql:defects_by_plant_line", "sql": "SELECT plant, line, COUNT(*) AS defect_count FROM production_defects WHERE LOWER(part) = LOWER(%(part)s) AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY plant, line ORDER BY defect_count DESC, plant, line LIMIT 100", "parameters": {"part": "door seal", "start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"plant": "Cedar Falls", "line": 3, "defect_count": 133}, {"plant": "Lakeview", "line": 4, "defect_count": 7}, {"plant": "Lakeview", "line": 3, "defect_count": 4}, {"plant": "Pine Ridge", "line": 4, "defect_count": 3}, {"plant": "Cedar Falls", "line": 2, "defect_count": 2}, {"plant": "Lakeview", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 1, "defect_count": 2}, {"plant": "Pine Ridge", "line": 3, "defect_count": 2}, {"plant": "Cedar Falls", "line": 1, "defect_count": 1}, {"plant": "Pine Ridge", "line": 2, "defect_count": 1}]}, {"id": "sql:severity_comparison", "sql": "SELECT part, AVG(severity) AS average_severity, COUNT(*) AS defect_count FROM production_defects WHERE date >= %(start_date)s AND date <= %(end_date)s GROUP BY part ORDER BY part LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18"}, "rows": [{"part_group": "requested part", "average_severity": 3.85, "defect_count": 157}, {"part_group": "all other parts", "average_severity": 2.83, "defect_count": 102}]}, {"id": "sql:weekly_downtime", "sql": "SELECT DATE_TRUNC('WEEK', date) AS week, SUM(minutes) AS downtime_minutes FROM downtime_events WHERE plant = %(plant)s AND line = %(line)s AND date >= %(start_date)s AND date <= %(end_date)s GROUP BY DATE_TRUNC('WEEK', date) ORDER BY week LIMIT 100", "parameters": {"start_date": "2025-05-05", "end_date": "2025-05-18", "plant": "Cedar Falls", "line": 3}, "rows": [{"week": "2025-05-05T00:00:00+00:00", "downtime_minutes": 259}, {"week": "2025-05-12T00:00:00+00:00", "downtime_minutes": 455}]}]
 supporting_documents: []
 ```
 
 **Expected value:** `{"expected_keywords": ["downtime", "seal"]}`
+
+**Root cause category:** retrieval
 
 **Why it failed:** Combined check requires data and citations; data evidence=True, document citations=False.

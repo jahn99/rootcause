@@ -13,6 +13,22 @@ from app.llm.factory import create_llm_provider
 from app.retrieval.search import HybridRetriever
 
 router = APIRouter()
+TOPIC_EXPANSIONS = (
+    (("seal", "weatherstrip", "wind noise"), "door seal weatherstrip weather strip water leak water intrusion wind noise"),
+    (("water", "leak", "intrusion", "cabin"), "water leak water leaking water intrusion cabin interior weatherstrip"),
+    (("wiring", "wire", "electrical", "short circuit"), "wiring wire harness electrical short circuit wiring defect"),
+)
+
+
+def expand_retrieval_query(question: str) -> str:
+    """Add focused automotive synonyms while preserving the user's original query."""
+    lowered = question.casefold()
+    additions = [
+        expansion
+        for signals, expansion in TOPIC_EXPANSIONS
+        if any(signal in lowered for signal in signals)
+    ]
+    return " ".join([question, *additions])
 
 
 class Retriever(Protocol):
@@ -73,7 +89,8 @@ async def ask(
     ):
         return AskResponse(answer="not found in the documents", sources=[])
 
-    chunks = retriever.retrieve(request.question, top_k=get_settings().retrieval_top_k)
+    retrieval_query = expand_retrieval_query(request.question)
+    chunks = retriever.retrieve(retrieval_query, top_k=get_settings().retrieval_top_k)
     sources = [
         Source(
             id=f"{chunk.source_type}:{chunk.source_id}",
@@ -92,9 +109,13 @@ async def ask(
         for source, chunk in zip(sources, chunks, strict=True)
     )
     prompt = (
-        "Answer the question using only the supplied NHTSA document excerpts. "
-        'If the excerpts do not support an answer, reply exactly: "not found in the documents". '
-        "Do not add facts from memory. Cite supporting source IDs in your answer.\n\n"
+        "Answer using only the supplied NHTSA document excerpts. First decide which excerpts directly "
+        "support the requested component and failure mode; shared vehicle brand or broad system "
+        "words alone do not make an excerpt relevant. When relevant excerpts exist, state the "
+        "specific reported failure modes and effects in concrete terms, and cite their source IDs. "
+        "Do not give a vague summary or refuse when the excerpts directly support an answer. "
+        'If no excerpt directly supports the question, reply exactly: "not found in the documents". '
+        "Do not infer one failure mode from a different component or add facts from memory.\n\n"
         f"Question: {request.question}\n\nExcerpts:\n{evidence}"
     )
     answer = await llm.generate(prompt)

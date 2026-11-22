@@ -24,6 +24,14 @@ SQL_OUTPUT_SCHEMA: dict[str, object] = {
     "additionalProperties": False,
 }
 logger = logging.getLogger(__name__)
+ISO_DATES = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+DAY_RANGE = re.compile(
+    r"\bbetween\s+(\d{1,2})\s+(?:and|to|through)\s+(\d{1,2})\s+"
+    r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\.?\s+(20\d{2})\b",
+    re.IGNORECASE,
+)
 
 
 class GeneratedSQL(BaseModel):
@@ -51,7 +59,11 @@ class SQLGenerationError(ValueError):
 
 def get_distinct_values(engine: Engine, column_name: str) -> set[str | int]:
     """Fetch values from a fixed allow-list of real manufacturing columns."""
-    columns = {"plant": ProductionDefect.plant, "line": ProductionDefect.line}
+    columns = {
+        "plant": ProductionDefect.plant,
+        "line": ProductionDefect.line,
+        "part": ProductionDefect.part,
+    }
     if column_name not in columns:
         raise ValueError("Only plant and line values can be checked")
     with engine.connect() as connection, connection.begin():
@@ -102,7 +114,121 @@ def get_table_schema(engine: Engine) -> str:
             raise RuntimeError(f"Required table is unavailable: {table}")
         column_text = ", ".join(f"{column['name']} {column['type']}" for column in columns)
         descriptions.append(f"public.{table}({column_text})")
+    parts = sorted(str(value) for value in get_distinct_values(engine, "part"))
+    descriptions.append(f"Stored production_defects.part values: {', '.join(parts)}")
     return "\n".join(descriptions)
+
+
+def _normalized_phrase(value: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.casefold()).split())
+
+
+def _part_mentioned(question: str, actual_parts: set[str | int]) -> str | None:
+    """Resolve an actual stored part value mentioned in the user's question."""
+    normalized_question = f" {_normalized_phrase(question)} "
+    for part in sorted((str(value) for value in actual_parts), key=len, reverse=True):
+        normalized_part = _normalized_phrase(part)
+        if f" {normalized_part} " in normalized_question:
+            return part
+        singular = re.sub(r"s\b", "", normalized_part)
+        if singular != normalized_part and f" {singular} " in normalized_question:
+            return part
+    return None
+
+
+def _question_date_bounds(question: str) -> tuple[date | None, date | None]:
+    """Extract common explicit date ranges and years without guessing dates."""
+    match = DAY_RANGE.search(question)
+    if match:
+        month = datetime.strptime(match.group(3)[:3].title(), "%b").month
+        year = int(match.group(4))
+        first = date(year, month, int(match.group(1)))
+        last = date(year, month, int(match.group(2)))
+        return min(first, last), max(first, last)
+    dates = [date.fromisoformat(value) for value in ISO_DATES.findall(question)]
+    if dates:
+        return min(dates), max(dates)
+    years = re.findall(r"\b(20\d{2})\b", question)
+    if years:
+        year = int(years[0])
+        return date(year, 1, 1), date(year, 12, 31)
+    return None, None
+
+
+def _planned_aggregate_query(question: str, engine: Engine) -> tuple[str, dict[str, Any]] | None:
+    """Use safe schema-grounded templates for common part-count and severity comparisons."""
+    lowered = question.casefold()
+    comparison = any(
+        term in lowered
+        for term in (
+            "compared with",
+            "compared to",
+            "versus",
+            "vs",
+            "other parts",
+            "other part categories",
+        )
+    )
+    avg_intent = "average severity" in lowered or "average" in lowered and "severity" in lowered
+    count_intent = any(term in lowered for term in ("how many", "count", "number of")) and "defect" in lowered
+    if not (avg_intent and comparison or count_intent):
+        return None
+
+    part = _part_mentioned(question, get_distinct_values(engine, "part"))
+    if part is None:
+        return None
+    start_date, end_date = _question_date_bounds(question)
+    clauses = ["LOWER(part) = LOWER(:part)"] if count_intent else []
+    parameters: dict[str, Any] = {"part": part}
+
+    plants = {str(value) for value in get_distinct_values(engine, "plant")}
+    normalized_question = _normalized_phrase(question)
+    plant = next(
+        (value for value in sorted(plants, key=len, reverse=True) if _normalized_phrase(value) in normalized_question),
+        None,
+    )
+    if count_intent and plant:
+        clauses.append("plant = :plant")
+        parameters["plant"] = plant
+    line_match = re.search(r"\bline\s*(\d+)\b", question, re.IGNORECASE)
+    if count_intent and line_match:
+        line = int(line_match.group(1))
+        if line in get_distinct_values(engine, "line"):
+            clauses.append("line = :line")
+            parameters["line"] = line
+    if start_date:
+        clauses.append("date >= :start_date")
+        parameters["start_date"] = start_date.isoformat()
+    if end_date:
+        clauses.append("date <= :end_date")
+        parameters["end_date"] = end_date.isoformat()
+
+    if avg_intent and comparison:
+        sql = (
+            "SELECT CASE WHEN LOWER(part) = LOWER(:part) THEN 'requested part' ELSE 'other parts' END AS part_group, "
+            "ROUND(AVG(severity)::numeric, 3) AS average_severity, COUNT(*) AS defect_count "
+            "FROM production_defects"
+        )
+        # The requested part contributes only the grouping expression, not a WHERE filter.
+        clauses = [clause for clause in clauses if not clause.startswith("LOWER(part)")]
+        sql += (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql += " GROUP BY part_group ORDER BY part_group"
+        return sql, parameters
+
+    if count_intent:
+        sql = "SELECT COUNT(*) AS defect_count FROM production_defects"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        return sql, parameters
+    return None
+
+
+def _row_facts(rows: list[dict[str, Any]]) -> str:
+    """Format all returned fields so a generated answer cannot omit their values."""
+    return "; ".join(
+        ", ".join(f"{key}={value}" for key, value in row.items())
+        for row in rows
+    )
 
 
 def _json_safe(value: Any) -> Any:
@@ -171,54 +297,78 @@ class DataAgent:
             )
 
         schema = get_table_schema(self.engine)
+        planned_query = _planned_aggregate_query(question, self.engine)
+        parameters: dict[str, Any] = {}
+        safe_sql: str | None = None
+        if planned_query is not None:
+            planned_sql, parameters = planned_query
+            safe_sql = validate_sql(planned_sql, row_limit=self.row_limit)
         generation_prompt = (
             "Produce one PostgreSQL SELECT query as JSON using the supplied schema. "
             "Use only the listed tables and columns. Do not use comments, CTEs, "
             "functions outside ordinary aggregation, or any write operation. "
+            "Use exact values listed for categorical columns; for part questions, filter "
+            "production_defects.part, not defect_type. For comparisons with other parts, "
+            "return separate aggregates for the requested part and all other parts, "
+            "including average_severity and defect_count. "
             "The query will be independently validated and run with a row cap. "
             "Return only an object with a single string property named sql.\n\n"
             f"Schema:\n{schema}\n\nQuestion: {question}"
         )
         validation_error: Exception | None = None
-        safe_sql: str | None = None
         raw = ""
-        for attempt in range(2):
-            prompt = generation_prompt
-            if validation_error is not None:
-                prompt += (
-                    f"\n\nThe previous output failed validation: {validation_error}. "
-                    "Return a corrected complete JSON object with a valid SELECT query."
+        if safe_sql is None:
+            for attempt in range(2):
+                prompt = generation_prompt
+                if validation_error is not None:
+                    prompt += (
+                        f"\n\nThe previous output failed validation: {validation_error}. "
+                        "Return a corrected complete JSON object with a valid SELECT query."
+                    )
+                raw = await self.llm.generate_json(
+                    prompt, SQL_OUTPUT_SCHEMA, max_output_tokens=600
                 )
-            raw = await self.llm.generate_json(
-                prompt, SQL_OUTPUT_SCHEMA, max_output_tokens=600
-            )
-            try:
-                generated = GeneratedSQL.model_validate(json.loads(raw))
-                safe_sql = validate_sql(generated.sql, row_limit=self.row_limit)
-                break
-            except (json.JSONDecodeError, ValidationError, SQLValidationError) as error:
-                validation_error = error
-                logger.warning(
-                    "SQL generation validation failed (attempt %d); finish_reason=%s raw_output=%r error=%s",
-                    attempt + 1,
-                    getattr(self.llm, "last_finish_reason", None),
-                    getattr(self.llm, "last_raw_output", None)
-                    if getattr(self.llm, "last_raw_output", None) is not None
-                    else raw,
-                    error,
-                )
+                try:
+                    generated = GeneratedSQL.model_validate(json.loads(raw))
+                    safe_sql = validate_sql(generated.sql, row_limit=self.row_limit)
+                    break
+                except (json.JSONDecodeError, ValidationError, SQLValidationError) as error:
+                    validation_error = error
+                    logger.warning(
+                        "SQL generation validation failed (attempt %d); finish_reason=%s raw_output=%r error=%s",
+                        attempt + 1,
+                        getattr(self.llm, "last_finish_reason", None),
+                        getattr(self.llm, "last_raw_output", None)
+                        if getattr(self.llm, "last_raw_output", None) is not None
+                        else raw,
+                        error,
+                    )
         if safe_sql is None:
             raise SQLGenerationError(
                 "The SQL agent could not produce a valid query after one retry. "
                 "Check the question and try again."
             ) from validation_error
 
-        rows = execute_readonly_sql(self.engine, safe_sql, timeout_ms=self.timeout_ms)
+        sqlalchemy_sql = re.sub(r"%\(([A-Za-z_][A-Za-z0-9_]*)\)s", r":\1", safe_sql)
+        if parameters:
+            rows = execute_readonly_sql(
+                self.engine, sqlalchemy_sql, timeout_ms=self.timeout_ms, parameters=parameters
+            )
+        else:
+            rows = execute_readonly_sql(self.engine, sqlalchemy_sql, timeout_ms=self.timeout_ms)
         answer_prompt = (
             "Answer the user's database question in one short plain-language sentence. "
             "Use only the query result JSON. If it is empty, say no records were found. "
             "Do not reveal credentials or invent values.\n\n"
             f"Question: {question}\nSQL: {safe_sql}\nRows: {json.dumps(rows, default=str)}"
         )
-        answer = await self.llm.generate(answer_prompt)
-        return DataAgentResult(sql=safe_sql, rows=rows, answer=answer.strip(), refused=False)
+        answer = (await self.llm.generate(answer_prompt)).strip()
+        if rows:
+            facts = _row_facts(rows)
+            if "no records were found" in answer.casefold() or "no records found" in answer.casefold():
+                answer = f"The SQL query returned {len(rows)} row(s): {facts}."
+            else:
+                answer = f"{answer} SQL result values: {facts}."
+        else:
+            answer = "No records were found."
+        return DataAgentResult(sql=safe_sql, rows=rows, answer=answer, refused=False)

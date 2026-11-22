@@ -18,18 +18,22 @@ VEHICLES = (
     ("FORD", "F-150"),
     ("TOYOTA", "CAMRY"),
     ("HONDA", "ACCORD"),
+    ("CHEVROLET", "SILVERADO"),
+    ("NISSAN", "ALTIMA"),
+    ("SUBARU", "OUTBACK"),
 )
+MODEL_YEARS = (2025, 2024, 2023, 2022, 2021, 2020)
 TOPIC_TERMS = (
-    "door", "seal", "brake", "airbag", "air bag", "fuel", "steer",
+    "door seal", "door seals", "seal gap", "brake", "airbag", "air bag", "fuel", "steer",
     "electrical", "electric", "wiring", "battery", "short circuit",
     "weatherstrip", "weather strip", "water leak", "water leaks", "water intrusion",
-    "water entering", "wind noise", "seal gap",
+    "water leaking", "water entering", "wind noise", "wire harness",
 )
 SOURCE_ENDPOINTS = {
     "recall": "/recalls/recallsByVehicle",
     "complaint": "/complaints/complaintsByVehicle",
 }
-MAX_RECORDS_PER_QUERY = 250
+MAX_RECORDS_PER_QUERY = 120
 
 
 @dataclass(frozen=True)
@@ -147,8 +151,11 @@ def normalize_records(
         if not isinstance(record, dict):
             continue
         text = _record_text(record)
-        lowered = text.lower()
-        if not any(topic in lowered for topic in TOPIC_TERMS):
+        lowered = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+        if not any(
+            re.sub(r"[^a-z0-9]+", " ", topic.casefold()).strip() in lowered
+            for topic in TOPIC_TERMS
+        ):
             continue
         source_id = _first(
             record,
@@ -179,14 +186,27 @@ def fetch_nhtsa_records(
     api_client = client or httpx.Client(timeout=30.0)
     records: list[NHTSARecord] = []
     try:
+        per_source_limit = max(1, max_records // len(SOURCE_ENDPOINTS))
         for source_type in SOURCE_ENDPOINTS:
-            for make, model in VEHICLES:
-                if len(records) >= max_records:
-                    return records
-                raw = fetch_raw_response(source_type, make, model, MODEL_YEAR, cache_dir, api_client)
-                batch = normalize_records(raw, source_type, make, model, MODEL_YEAR)
-                take = min(MAX_RECORDS_PER_QUERY, max_records - len(records))
-                records.extend(batch[:take])
+            source_record_count = 0
+            for model_year in MODEL_YEARS:
+                for make, model in VEHICLES:
+                    if len(records) >= max_records or source_record_count >= per_source_limit:
+                        break
+                    raw = fetch_raw_response(
+                        source_type, make, model, model_year, cache_dir, api_client
+                    )
+                    batch = normalize_records(raw, source_type, make, model, model_year)
+                    take = min(
+                        MAX_RECORDS_PER_QUERY,
+                        per_source_limit - source_record_count,
+                        max_records - len(records),
+                    )
+                    selected = batch[:take]
+                    records.extend(selected)
+                    source_record_count += len(selected)
+                if len(records) >= max_records or source_record_count >= per_source_limit:
+                    break
     finally:
         if owns_client:
             api_client.close()

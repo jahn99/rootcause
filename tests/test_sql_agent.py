@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import date
 
 import pytest
 from sqlalchemy import create_engine
@@ -182,6 +183,7 @@ class FakeLLM:
 
 def test_data_agent_generates_validates_executes_and_summarizes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(data_agent_module, "get_table_schema", lambda _engine: "approved schema")
+    monkeypatch.setattr(data_agent_module, "get_distinct_values", lambda *_args: set())
     monkeypatch.setattr(
         data_agent_module,
         "execute_readonly_sql",
@@ -193,14 +195,95 @@ def test_data_agent_generates_validates_executes_and_summarizes(monkeypatch: pyt
 
     assert result.sql == "SELECT COUNT(*) AS count FROM production_defects LIMIT 20"
     assert result.rows == [{"count": 12}]
-    assert result.answer == "There are 12 defects."
+    assert "There are 12 defects." in result.answer
+    assert "count=12" in result.answer
     assert "approved schema" in llm.json_prompt
     assert "12" in llm.answer_prompt
     engine.dispose()
 
 
+@pytest.mark.parametrize(
+    ("question", "expected_sql", "expected_params", "returned_rows", "required_answer_bits"),
+    [
+        (
+            "How many door-seal defects were logged on Cedar Falls, Line 3, between 5 and 18 May 2025?",
+            "LOWER(part) = LOWER(%(part)s)",
+            {"part": "door seal", "plant": "Cedar Falls", "line": 3,
+             "start_date": "2025-05-05", "end_date": "2025-05-18"},
+            [{"defect_count": 133}],
+            ("133",),
+        ),
+        (
+            "Compare average severity for door-seal defects with other parts during 2025.",
+            "ELSE 'other parts'",
+            {"part": "door seal", "start_date": "2025-01-01", "end_date": "2025-12-31"},
+            [
+                {"part_group": "requested part", "average_severity": 3.206, "defect_count": 457},
+                {"part_group": "other parts", "average_severity": 2.697, "defect_count": 1332},
+            ],
+            ("3.206", "2.697", "457", "1332"),
+        ),
+        (
+            "What is the average severity of door-seal defects compared with other part categories during 2025?",
+            "ELSE 'other parts'",
+            {"part": "door seal", "start_date": "2025-01-01", "end_date": "2025-12-31"},
+            [
+                {"part_group": "requested part", "average_severity": 3.206, "defect_count": 457},
+                {"part_group": "other parts", "average_severity": 2.697, "defect_count": 1332},
+            ],
+            ("3.206", "2.697", "457", "1332"),
+        ),
+    ],
+)
+def test_data_agent_uses_grounded_templates_and_answers_with_row_values(
+    monkeypatch: pytest.MonkeyPatch,
+    question: str,
+    expected_sql: str,
+    expected_params: dict[str, object],
+    returned_rows: list[dict[str, object]],
+    required_answer_bits: tuple[str, ...],
+) -> None:
+    monkeypatch.setattr(data_agent_module, "get_table_schema", lambda _engine: "approved schema")
+    monkeypatch.setattr(
+        data_agent_module,
+        "get_distinct_values",
+        lambda _engine, column: {
+            "part": {"door seal", "brake caliper", "seat frame"},
+            "plant": {"Cedar Falls", "Lakeview"},
+            "line": {1, 2, 3},
+        }[column],
+    )
+    captured: dict[str, object] = {}
+
+    def execute(_engine, query, timeout_ms, parameters=None):
+        captured.update(sql=query, parameters=parameters, timeout_ms=timeout_ms)
+        return returned_rows
+
+    monkeypatch.setattr(data_agent_module, "execute_readonly_sql", execute)
+    llm = FakeLLM()
+    engine = create_engine("postgresql+psycopg://rootcause_readonly:test@localhost/rootcause")
+
+    result = asyncio.run(DataAgent(llm, engine).ask(question))
+
+    assert expected_sql in result.sql
+    assert captured["parameters"] == expected_params
+    assert result.rows == returned_rows
+    assert all(bit in result.answer for bit in required_answer_bits)
+    assert not llm.json_prompts
+    engine.dispose()
+
+
+def test_question_date_bounds_extracts_textual_day_range() -> None:
+    from app.agents.data_agent import _question_date_bounds
+
+    assert _question_date_bounds("between 5 and 18 May 2025") == (
+        date(2025, 5, 5), date(2025, 5, 18)
+    )
+
+
 def test_data_agent_retries_empty_json_then_executes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(data_agent_module, "get_table_schema", lambda _engine: "approved schema")
+    monkeypatch.setattr(data_agent_module, "get_distinct_values", lambda *_args: set())
     monkeypatch.setattr(
         data_agent_module,
         "execute_readonly_sql",
@@ -222,6 +305,7 @@ def test_data_agent_retries_truncated_sql_and_fails_clearly_after_retry(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(data_agent_module, "get_table_schema", lambda _engine: "approved schema")
+    monkeypatch.setattr(data_agent_module, "get_distinct_values", lambda *_args: set())
     truncated_sql = json.dumps({"sql": "SELECT * FROM"})
     llm = FakeLLM(responses=[truncated_sql, truncated_sql])
     engine = create_engine("postgresql+psycopg://rootcause_readonly:test@localhost/rootcause")

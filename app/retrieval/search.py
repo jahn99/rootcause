@@ -62,7 +62,10 @@ class HybridRetriever:
 
             bm25_results: list[KnowledgeChunk] = []
             if self.mode in {"hybrid", "bm25"}:
-                tokenized_corpus = [tokenize(document.content) for document in documents]
+                tokenized_corpus = [
+                    tokenize(f"{document.content} {document.component} {document.source_type}")
+                    for document in documents
+                ]
                 if any(tokenized_corpus):
                     scorer = BM25Okapi(tokenized_corpus)
                     scores = scorer.get_scores(tokenize(query))

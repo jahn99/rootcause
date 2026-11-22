@@ -76,6 +76,7 @@ DOCUMENT_METADATA_KEYS = {
     "nhtsaid", "crash", "fire", "numberofinjuries", "numberofdeaths",
     "dateofincident", "datecomplaintfiled", "reportreceiveddate", "reportdate",
 }
+REPORT_NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])\d+(?:,\d{3})*(?:\.\d+)?(?![A-Za-z0-9])")
 
 
 class TriageContext(BaseModel):
@@ -187,6 +188,7 @@ def deterministic_fallback_report(
     supporting_data: list[SupportingData],
     supporting_documents: list[SupportingDocument],
     limitations: list[str],
+    key_findings: list[str] | None = None,
 ) -> EightDReport:
     """Build a conservative report from gathered evidence after invalid LLM JSON."""
     fallback_limitations = [
@@ -196,6 +198,8 @@ def deterministic_fallback_report(
     ]
     return EightDReport(
         problem_description=issue.strip()[:350] or "An issue was submitted for investigation.",
+        answer=_direct_answer(key_findings or [], supporting_documents),
+        key_findings=key_findings or [],
         containment_actions=["Review the affected output and contain suspected parts pending human review."],
         root_cause_hypotheses=[],
         corrective_actions=["Review the gathered SQL results and public documents before selecting corrective action."],
@@ -204,6 +208,127 @@ def deterministic_fallback_report(
         supporting_data=supporting_data,
         supporting_documents=supporting_documents,
         human_review_note="Draft for human review.",
+    )
+
+
+def _direct_answer(
+    key_findings: list[str], documents: list[SupportingDocument]
+) -> str:
+    """Build a direct evidence-led answer from Python-computed findings and citations."""
+    parts = list(key_findings)
+    if documents:
+        document_facts = [
+            f"[{item.id}] {item.snippet[:180].strip()}"
+            for item in documents[:3]
+            if item.snippet.strip()
+        ]
+        if document_facts:
+            parts.append("Related public reports: " + " ".join(document_facts))
+    else:
+        parts.append("No relevant NHTSA document evidence was retrieved.")
+    return " ".join(parts) or "No matching data or document evidence was found."
+
+
+def build_key_findings(
+    triage: dict[str, Any], supporting_data: list[SupportingData]
+) -> list[str]:
+    """Compute concise, numeric findings directly from the fixed SQL result rows."""
+    result_by_name = {
+        item.id.removeprefix("sql:"): item.rows
+        for item in supporting_data
+    }
+    findings: list[str] = []
+    weekly_defects = result_by_name.get("weekly_defects", [])
+    if weekly_defects:
+        total = sum(int(row.get("defect_count", 0)) for row in weekly_defects)
+        part = triage.get("part") or "the selected part"
+        location = " ".join(
+            value
+            for value in (
+                str(triage["plant"]) if triage.get("plant") else "",
+                f"Line {triage['line']}" if triage.get("line") is not None else "",
+            )
+            if value
+        )
+        bounds = " through ".join(
+            str(triage[key]) for key in ("start_date", "end_date") if triage.get(key)
+        )
+        scope = " ".join(value for value in (location, f"during {bounds}" if bounds else "") if value)
+        findings.append(f"Defect total: {total} {part} defects {scope}.".strip())
+        peak = max(weekly_defects, key=lambda row: int(row.get("defect_count", 0)))
+        findings.append(
+            f"Peak week starting {str(peak.get('week', 'unknown'))[:10]}: "
+            f"{int(peak.get('defect_count', 0))} defects."
+        )
+
+    downtime_rows = result_by_name.get("weekly_downtime", [])
+    if downtime_rows and triage.get("start_date") and triage.get("end_date"):
+        start = date.fromisoformat(str(triage["start_date"]))
+        end = date.fromisoformat(str(triage["end_date"]))
+        first_week = start - timedelta(days=start.weekday())
+        last_week = end - timedelta(days=end.weekday())
+        dated_rows: list[tuple[date, int]] = []
+        for row in downtime_rows:
+            try:
+                week = date.fromisoformat(str(row["week"])[:10])
+            except (KeyError, ValueError):
+                continue
+            dated_rows.append((week, int(row.get("downtime_minutes", 0))))
+        in_window = [minutes for week, minutes in dated_rows if first_week <= week <= last_week]
+        surrounding = [
+            minutes for week, minutes in dated_rows if week < first_week or week > last_week
+        ]
+        if in_window and surrounding:
+            window_total = sum(in_window)
+            window_average = round(window_total / len(in_window), 1)
+            surrounding_average = round(sum(surrounding) / len(surrounding), 1)
+            findings.append(
+                f"Downtime comparison: {window_total} minutes total across {len(in_window)} "
+                f"window weeks ({window_average} per week), versus {surrounding_average} "
+                f"minutes per week across {len(surrounding)} surrounding weeks."
+            )
+
+    top_parts = result_by_name.get("top_parts", [])
+    if top_parts:
+        winner = top_parts[0]
+        findings.append(
+            f"Top part by defect count: {winner.get('part')} with "
+            f"{int(winner.get('defect_count', 0))} defects."
+        )
+    return findings[:6]
+
+
+def _unsupported_report_numbers(
+    report_fields: dict[str, Any], key_findings: list[str]
+) -> list[str]:
+    """Find numeric claims in prose that are absent from Python-computed findings."""
+    allowed = {
+        value.replace(",", "")
+        for value in REPORT_NUMBER_PATTERN.findall(" ".join(key_findings))
+    }
+    prose: list[str] = []
+    for key in (
+        "problem_description", "containment_actions", "corrective_actions",
+        "preventive_actions", "limitations",
+    ):
+        value = report_fields.get(key)
+        if isinstance(value, str):
+            prose.append(value)
+        elif isinstance(value, list):
+            prose.extend(item for item in value if isinstance(item, str))
+    hypotheses = report_fields.get("root_cause_hypotheses", [])
+    if isinstance(hypotheses, list):
+        prose.extend(
+            str(item.get("hypothesis", ""))
+            for item in hypotheses
+            if isinstance(item, dict)
+        )
+    return sorted(
+        {
+            value.replace(",", "")
+            for value in REPORT_NUMBER_PATTERN.findall(" ".join(prose))
+            if value.replace(",", "") not in allowed
+        }
     )
 
 
@@ -352,6 +477,7 @@ def prepare_report_evidence(
     documents: list[SupportingDocument],
     limitations: list[str],
     token_budget: int = REPORT_EVIDENCE_TOKEN_BUDGET,
+    key_findings: list[str] | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Trim and normalize evidence to the report agent's prompt budget."""
     evidence: dict[str, Any] = {
@@ -362,13 +488,14 @@ def prepare_report_evidence(
         },
         "sql_results": [
             {"id": item.id, "rows": _trim_query_rows(item.id, item.rows, 20)}
-            for item in sql_data[:4]
+            for item in sql_data[:3]
         ],
         "documents": [
             {"id": item.id, "snippet": clean_document_snippet(item.snippet, 500)}
             for item in documents[:4]
         ],
         "limitations": [item[:200] for item in limitations[:5]],
+        "key_findings": (key_findings or [])[:6],
     }
     for rowset in evidence["sql_results"]:
         rowset["rows"] = [
@@ -555,7 +682,6 @@ class InvestigationWorkflow:
             SupportingDocument.model_validate(item)
             for item in state.get("supporting_documents", [])[:4]
         ]
-        raw_sql_data = raw_sql_data[:4]
         limitations = [
             item
             for item in (state.get("data_limitation", ""), state.get("knowledge_limitation", ""))
@@ -565,8 +691,14 @@ class InvestigationWorkflow:
             limitations.append("insufficient evidence to identify or confirm a root cause.")
         if not raw_sql_data or not any(item.rows for item in raw_sql_data):
             limitations.append("No manufacturing data rows were found for the issue.")
+        key_findings = build_key_findings(state.get("triage", {}), raw_sql_data)
+        selected_ids = {"sql:weekly_defects", "sql:weekly_downtime", "sql:top_parts"}
+        selected_sql_data = [item for item in raw_sql_data if item.id in selected_ids]
+        selected_sql_data.extend(item for item in raw_sql_data if item not in selected_sql_data)
+        selected_sql_data = selected_sql_data[:3]
         evidence, evidence_tokens = prepare_report_evidence(
-            state.get("triage", {}), raw_sql_data, documents, limitations
+            state.get("triage", {}), selected_sql_data, documents, limitations,
+            key_findings=key_findings,
         )
         logger.debug("8D estimated report prompt evidence tokens=%d", evidence_tokens)
 
@@ -588,6 +720,8 @@ class InvestigationWorkflow:
             "Draft a concise automotive 8D report using ONLY the gathered evidence JSON below. "
             "Do not invent causes, measurements, facts, or recall numbers. Every root-cause "
             "hypothesis must cite one or more exact IDs from the allowed evidence IDs. "
+            "The Python-generated key_findings are the only source from which you may quote "
+            "numbers; do not repeat or derive numbers from raw SQL rows, and do not change them. "
             "If evidence does not support a cause, provide no hypothesis and include the exact "
             "phrase 'insufficient evidence' in limitations. Use at most three short items in each "
             "action section and at most three hypotheses. Keep each item to one short sentence. "
@@ -613,6 +747,12 @@ class InvestigationWorkflow:
                 payload = normalize_report_payload(json.loads(raw))
                 draft = ReportDraft.model_validate(payload)
                 report_fields = draft.model_dump()
+                unsupported_numbers = _unsupported_report_numbers(report_fields, key_findings)
+                if unsupported_numbers:
+                    raise ValueError(
+                        "The draft contains numbers absent from Python key_findings: "
+                        f"{unsupported_numbers}"
+                    )
                 combined_limitations = list(dict.fromkeys(draft.limitations + limitations))
                 combined_limitations = [item[:200] for item in combined_limitations]
                 if not evidence_ids and not any("insufficient evidence" in item.lower() for item in combined_limitations):
@@ -627,6 +767,8 @@ class InvestigationWorkflow:
                 report_fields["limitations"] = combined_limitations
                 report = EightDReport(
                     **report_fields,
+                    answer=_direct_answer(key_findings, documents),
+                    key_findings=key_findings,
                     supporting_data=sql_data,
                     supporting_documents=documents,
                     human_review_note="Draft for human review.",
@@ -651,6 +793,6 @@ class InvestigationWorkflow:
             "Report validation retries exhausted; returning deterministic fallback from gathered evidence"
         )
         fallback = deterministic_fallback_report(
-            state["issue"], sql_data, documents, limitations
+            state["issue"], sql_data, documents, limitations, key_findings
         )
         return {"report": fallback.model_dump(mode="json")}

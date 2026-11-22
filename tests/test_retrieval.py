@@ -5,10 +5,20 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
-from app.api.ask import get_llm_provider, get_retriever
+from app.api.ask import expand_retrieval_query, get_llm_provider, get_retriever
 from app.ingestion.chunking import chunk_text
 from app.main import app
 from app.retrieval.search import reciprocal_rank_fusion
+
+
+def test_retrieval_query_expands_common_automotive_synonyms() -> None:
+    water_query = expand_retrieval_query("What complaints describe water leaking into the cabin?")
+    wiring_query = expand_retrieval_query("Which recalls describe wiring short circuits?")
+
+    assert "water intrusion" in water_query
+    assert "weatherstrip" in water_query
+    assert "short circuit" in wiring_query
+    assert "wire harness" in wiring_query
 
 
 @dataclass
@@ -99,6 +109,52 @@ def test_ask_says_not_found_when_retrieval_is_empty() -> None:
     assert response.json() == {"answer": "not found in the documents", "sources": []}
 
 
+def test_ask_prompt_requires_specific_failure_modes_when_sources_support_them() -> None:
+    class WaterLeakRetriever:
+        def __init__(self) -> None:
+            self.query = ""
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[object]:
+            self.query = query
+            return [
+                type(
+                    "Chunk",
+                    (),
+                    {
+                        "source_type": "complaint",
+                        "source_id": "water-1",
+                        "content": "The owner reported rainwater leaking past the windshield seal into the cabin.",
+                        "component": "BODY",
+                        "record_date": None,
+                    },
+                )()
+            ]
+
+    class SpecificAnswerLLM:
+        prompt = ""
+
+        async def generate(self, prompt: str) -> str:
+            self.prompt = prompt
+            return "The complaint says rainwater leaked past the windshield seal into the cabin. [complaint:water-1]"
+
+    retriever = WaterLeakRetriever()
+    llm = SpecificAnswerLLM()
+    app.dependency_overrides[get_retriever] = lambda: retriever
+    app.dependency_overrides[get_llm_provider] = lambda: llm
+    try:
+        response = TestClient(app).post(
+            "/ask", json={"question": "What complaints describe water leaking into the vehicle cabin?"}
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert "water leaked" in response.json()["answer"]
+    assert "weatherstrip" in retriever.query
+    assert "specific reported failure modes" in llm.prompt
+    assert "do not give a vague summary" in llm.prompt.casefold()
+
+
 def test_ask_does_not_guess_internal_root_cause_information() -> None:
     class MustNotRetrieve:
         def retrieve(self, query: str, top_k: int = 5) -> list[object]:
@@ -109,7 +165,7 @@ def test_ask_does_not_guess_internal_root_cause_information() -> None:
     try:
         response = TestClient(app).post(
             "/ask",
-            json={"question": "What is Mercedes-Benz's internal root cause analysis for door-seal failures?"},
+            json={"question": "What is a vehicle manufacturer's internal root cause analysis for door-seal failures?"},
         )
     finally:
         app.dependency_overrides.clear()

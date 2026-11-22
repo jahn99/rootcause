@@ -53,6 +53,8 @@ class ReportDraft(ReportModel):
 class EightDReport(ReportDraft):
     """Complete 8D report with evidence gathered outside the LLM draft."""
 
+    answer: str = "No evidence-based findings were available."
+    key_findings: list[str] = Field(default_factory=list, max_length=6)
     supporting_data: list[SupportingData]
     supporting_documents: list[SupportingDocument]
     human_review_note: Literal["Draft for human review."] = "Draft for human review."

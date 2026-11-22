@@ -1,7 +1,7 @@
 """Tests for deterministic evaluation scoring and failure explanations."""
 
 from eval.scoring import sql_expected_values_match
-from scripts.run_eval import _failure_reason, _render_failure_report, _score
+from scripts.run_eval import _failure_reason, _render_failure_report, _score, _summary
 
 
 def test_sql_expected_values_normalize_commas_and_accept_two_decimal_rounding() -> None:
@@ -38,7 +38,10 @@ def test_failure_report_explains_answer_vs_source_keyword_results() -> None:
         "id": "Q03",
         "category": "doc",
         "status": "completed",
-        "response": {"answer": "not found in the documents", "sources": []},
+        "response": {
+            "answer": "not found in the documents",
+            "sources": [{"id": "complaint:Q3", "snippet": "Water leaked into the vehicle cabin."}],
+        },
         "score": {
             "status": "scored",
             "keyword_hit_rate": 0.0,
@@ -52,3 +55,13 @@ def test_failure_report_explains_answer_vs_source_keyword_results() -> None:
     assert "answer keyword hit rate was 0%" in report.casefold()
     assert "Cited-source keyword hit: True" in report
     assert "not found in the documents" in report
+    assert "Root cause category:** LLM output" in report
+
+
+def test_eval_summary_counts_scored_failures_not_only_request_errors() -> None:
+    rows = [
+        {"status": "completed", "score": {"status": "scored", "number_match": False}},
+        {"status": "completed", "score": {"status": "scored", "number_match": True}},
+    ]
+
+    assert _summary(rows, {})["failure_count"] == 1

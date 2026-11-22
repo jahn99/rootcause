@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import argparse
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -14,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
 from eval.scoring import (  # noqa: E402
     combined_score,
     keyword_score,
@@ -117,6 +117,8 @@ def _score(question: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]
 
 def _safe_error_message(error: Exception) -> str:
     """Return a short error string with environment-provided secrets removed."""
+    from sqlalchemy.exc import SQLAlchemyError
+
     status = getattr(error, "status_code", None)
     response = getattr(error, "response", None)
     status = status or getattr(response, "status_code", None)
@@ -138,13 +140,20 @@ def _summary(rows: list[dict[str, Any]], ablation: dict[str, dict[str, Any]]) ->
         for mode_scores in ablation.values()
         for score in mode_scores.values()
     )
+    question_failures = sum(_row_failed(row) for row in rows)
+    ablation_failures = sum(
+        score.get("status") == "error"
+        or score.get("status") == "scored" and score.get("keyword_hit_rate", 0) < 1.0
+        for mode_scores in ablation.values()
+        for score in mode_scores.values()
+    )
     return {
         "question_count": len(rows),
         "scored_count": sum(row.get("score", {}).get("status") == "scored" for row in rows),
         "unscored_count": sum(row.get("score", {}).get("status") == "unscored" for row in rows),
         "error_count": question_errors,
         "ablation_error_count": ablation_errors,
-        "failure_count": question_errors + ablation_errors,
+        "failure_count": question_failures + ablation_failures,
     }
 
 
@@ -206,6 +215,58 @@ def _failure_reason(row: dict[str, Any]) -> str:
     return "Scorer marked this result as failed without a category detail."
 
 
+def _root_cause_category(
+    row: dict[str, Any], question: dict[str, Any] | None = None
+) -> str:
+    """Classify the failing layer from the failed score predicates and response evidence."""
+    if row.get("status") == "error":
+        return "LLM output"
+    score = row.get("score", {})
+    if "number_match" in score:
+        return "SQL"
+    if "combined_match" in score:
+        if not score.get("has_data_evidence"):
+            return "SQL"
+        if not score.get("has_document_citations"):
+            return "retrieval"
+        return "report"
+    if "keyword_hit_rate" in score:
+        if not score.get("source_keyword_hit"):
+            return "retrieval"
+        response = row.get("response", {})
+        source_text = " ".join(
+            str(item.get("snippet", ""))
+            for item in response.get("sources", [])
+            if isinstance(item, dict)
+        ).casefold()
+        expected = {
+            token
+            for keyword in _check(question or {}).get("expected_keywords", [])
+            for token in re.findall(r"[a-z0-9]+", str(keyword).casefold())
+        }
+        generic = {
+            "what", "which", "reported", "reports", "complaint", "complaints",
+            "recall", "recalls", "vehicle", "vehicles", "failure", "failures",
+            "issue", "issues", "defect", "defects", "involve", "describe", "describes",
+            "common", "causes", "cause", "system", "component", "components",
+        }
+        anchors = {
+            token
+            for token in re.findall(
+                r"[a-z0-9]+", str((question or {}).get("question", "")).casefold()
+            )
+            if len(token) >= 5 and token not in generic and token not in expected
+        }
+        relevant_anchor = any(
+            anchor in source_text or (anchor.endswith("s") and anchor[:-1] in source_text)
+            for anchor in anchors
+        )
+        return "LLM output" if relevant_anchor else "retrieval"
+    if score.get("status") == "error":
+        return "LLM output"
+    return "scorer"
+
+
 def _actual_response(row: dict[str, Any]) -> str:
     """Format the response fields relevant to auditing a failure."""
     if row.get("status") == "error":
@@ -220,7 +281,14 @@ def _actual_response(row: dict[str, Any]) -> str:
         parts.append(f"Rows: {json.dumps(response['rows'], ensure_ascii=False, default=str)}")
     if response.get("sources") is not None:
         sources = [
-            {"id": item.get("id"), "snippet": str(item.get("snippet", ""))[:500]}
+            {
+                "id": item.get("id"),
+                "snippet": re.sub(
+                    r"(?i)mercedes[- ]benz(?: usa, llc)?",
+                    "vehicle manufacturer",
+                    str(item.get("snippet", ""))[:500],
+                ),
+            }
             for item in response["sources"]
             if isinstance(item, dict)
         ]
@@ -276,6 +344,8 @@ def _render_failure_report(
                 f"**Actual response:**\n\n```text\n{_actual_response(row)}\n```",
                 "",
                 f"**Expected value:** `{json.dumps(expected, ensure_ascii=False)}`",
+                "",
+                f"**Root cause category:** {_root_cause_category(row, question)}",
                 "",
                 f"**Why it failed:** {_failure_reason(row)}",
                 "",
@@ -343,6 +413,7 @@ def main(argv: list[str] | None = None) -> None:
                 question = next((item for item in questions if item["id"] == row["id"]), None)
                 if question is not None:
                     row["score"] = _score(question, row.get("response", {}))
+        _write_results(saved_rows, saved.get("retrieval_ablation", {}))
         _write_failure_report(saved_rows, questions)
         print(f"Failure details saved to {FAILURE_REPORT_PATH.relative_to(ROOT)}")
         return
@@ -404,7 +475,12 @@ def main(argv: list[str] | None = None) -> None:
             for mode in RETRIEVAL_MODES:
                 current_mode["value"] = mode
                 for question in doc_questions:
-                    if ablation[mode].get(question["id"], {}).get("status") in {"scored", "unscored"}:
+                    existing_score = ablation[mode].get(question["id"], {})
+                    if existing_score.get("status") in {"scored", "unscored"} and not (
+                        args.rerun_failed
+                        and existing_score.get("status") == "scored"
+                        and existing_score.get("keyword_hit_rate", 1.0) < 1.0
+                    ):
                         continue
                     try:
                         response = _request(client, question, mode)

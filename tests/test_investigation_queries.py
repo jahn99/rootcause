@@ -110,6 +110,7 @@ def test_templates_return_spike_peak_weeks(query_runner: InvestigationQueryRunne
         "defects_by_plant_line",
         "severity_comparison",
         "weekly_downtime",
+        "top_parts",
     ]
     assert weekly.rows == [
         {"week": "2025-05-05", "defect_count": 42},
@@ -117,6 +118,8 @@ def test_templates_return_spike_peak_weeks(query_runner: InvestigationQueryRunne
     ]
     assert "%(part)s" in weekly.sql
     assert weekly.parameters["part"] == "door seal"
+    assert results[3].parameters["downtime_start"] == "2025-04-21"
+    assert results[3].parameters["downtime_end"] == "2025-06-01"
 
 
 def test_top_parts_template_returns_highest_part(query_runner: InvestigationQueryRunner) -> None:

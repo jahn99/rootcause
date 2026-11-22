@@ -9,10 +9,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.ingestion.nhtsa import fetch_nhtsa_records  # noqa: E402
 from app.ingestion.store import ingest_records  # noqa: E402
+from app.ingestion.chunking import chunk_text  # noqa: E402
 
 DATA_DIR = Path("data")
 CACHE_DIR = DATA_DIR / "nhtsa_cache"
 MAX_RECORDS = 2000
+COVERAGE_TERMS = ("door seal", "weatherstrip", "water leak", "wind noise", "wiring", "short circuit")
 
 
 def main() -> None:
@@ -22,6 +24,10 @@ def main() -> None:
         raise SystemExit("No NHTSA records matched the selected safety topics.")
     chunk_count = ingest_records(records)
     print(f"Ingested {len(records)} NHTSA records as {chunk_count} chunks.")
+    chunks = [chunk for record in records for chunk in chunk_text(record.text)]
+    for term in COVERAGE_TERMS:
+        count = sum(term in chunk.casefold() for chunk in chunks)
+        print(f"Chunks mentioning {term!r}: {count}")
     print(f"Raw API responses are cached in {CACHE_DIR}.")
 
 

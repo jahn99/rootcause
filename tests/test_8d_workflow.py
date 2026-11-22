@@ -16,6 +16,8 @@ from app.reports.schema import EightDReport, SupportingData, SupportingDocument
 from app.reports.workflow import (
     REPORT_EVIDENCE_TOKEN_BUDGET,
     InvestigationWorkflow,
+    build_key_findings,
+    deterministic_fallback_report,
     estimate_tokens,
     normalize_report_payload,
     prepare_report_evidence,
@@ -96,7 +98,7 @@ class FakeInvestigationQueryRunner:
                     "top_parts",
                     "SELECT part, COUNT(*) FROM production_defects GROUP BY part",
                     {},
-                    [{"part": "door seal", "defect_count": 457}],
+                    [] if self.empty else [{"part": "door seal", "defect_count": 457}],
                 )
             ]
         rows = [] if self.empty else [{"count": 5}]
@@ -113,6 +115,12 @@ class FakeInvestigationQueryRunner:
             InvestigationQueryResult("defects_by_plant_line", "SELECT plant FROM production_defects", {"part": "door seal"}, rows),
             InvestigationQueryResult("severity_comparison", "SELECT AVG(severity) FROM production_defects", {"part": "door seal"}, rows),
             InvestigationQueryResult("weekly_downtime", "SELECT date_trunc('week', date) FROM downtime_events", {}, rows),
+            InvestigationQueryResult(
+                "top_parts",
+                "SELECT part, COUNT(*) FROM production_defects GROUP BY part",
+                {},
+                [] if self.empty else [{"part": "door seal", "defect_count": 457}],
+            ),
         ]
 
 
@@ -237,6 +245,9 @@ def test_workflow_gathers_both_sources_and_uses_only_evidence() -> None:
     assert "line 3" in retriever.query
     assert report.supporting_data[0].id == "sql:weekly_defects"
     assert report.supporting_documents[0].id == "complaint:123"
+    assert any("133 door seal defects" in item for item in report.key_findings)
+    assert "133" in report.answer
+    assert "key_findings" in llm.prompts[0]
     assert report.root_cause_hypotheses[0].evidence == ["sql:weekly_defects", "complaint:123"]
     assert "ONLY the gathered evidence" in llm.prompts[0]
     assert "Do not invent causes" in llm.prompts[0]
@@ -252,7 +263,7 @@ def test_workflow_without_plant_or_dates_runs_part_overviews() -> None:
         "top_part_query": False,
     }
     assert "door seal weatherstrip water leak wind noise" in retriever.query
-    assert len(report.supporting_data) == 4
+    assert len(report.supporting_data) == 3
     assert report.supporting_documents[0].id == "complaint:123"
 
 
@@ -273,6 +284,7 @@ def test_month_only_triage_and_investigation_input() -> None:
 
 def test_top_part_query_wins_triage_part_for_document_retrieval() -> None:
     draft = sample_draft()
+    draft["problem_description"] = "The highest-count production part was identified."
     draft["root_cause_hypotheses"][0]["evidence"] = ["sql:top_parts", "complaint:123"]
     workflow, query_runner, retriever, _ = build_workflow(FakeLLM([json.dumps(draft)]))
     report = asyncio.run(
@@ -286,12 +298,84 @@ def test_top_part_query_wins_triage_part_for_document_retrieval() -> None:
     assert "door seal weatherstrip water leak wind noise" in retriever.query
 
 
+def test_key_findings_cover_window_total_peak_downtime_and_top_part() -> None:
+    sql_data = [
+        SupportingData(
+            id="sql:weekly_defects",
+            sql="SELECT week, defect_count FROM production_defects",
+            rows=[
+                {"week": "2025-05-05", "defect_count": 42},
+                {"week": "2025-05-12", "defect_count": 91},
+            ],
+        ),
+        SupportingData(
+            id="sql:weekly_downtime",
+            sql="SELECT week, downtime_minutes FROM downtime_events",
+            rows=[
+                {"week": "2025-04-21", "downtime_minutes": 100},
+                {"week": "2025-04-28", "downtime_minutes": 120},
+                {"week": "2025-05-05", "downtime_minutes": 259},
+                {"week": "2025-05-12", "downtime_minutes": 455},
+                {"week": "2025-05-19", "downtime_minutes": 300},
+                {"week": "2025-05-26", "downtime_minutes": 200},
+            ],
+        ),
+        SupportingData(
+            id="sql:top_parts",
+            sql="SELECT part, COUNT(*) FROM production_defects GROUP BY part",
+            rows=[{"part": "door seal", "defect_count": 457}],
+        ),
+    ]
+    findings = build_key_findings(
+        {
+            "part": "door seal", "plant": "Cedar Falls", "line": 3,
+            "start_date": "2025-05-05", "end_date": "2025-05-18",
+        },
+        sql_data,
+    )
+
+    assert any("133 door seal defects" in item for item in findings)
+    assert any("2025-05-12: 91 defects" in item for item in findings)
+    assert any("714 minutes total" in item and "180.0 minutes per week" in item for item in findings)
+    assert any("door seal with 457 defects" in item for item in findings)
+
+
+def test_deterministic_fallback_keeps_key_findings_and_relevant_documents() -> None:
+    findings = ["Peak week starting 2025-05-12: 91 defects."]
+    document = SupportingDocument(
+        id="complaint:public-1", source_type="complaint",
+        snippet="The owner reported water leaking past the door seal.", date=None,
+    )
+    report = deterministic_fallback_report("Door seal failures", [], [document], [], findings)
+
+    assert report.key_findings == findings
+    assert "91" in report.answer
+    assert "complaint:public-1" in report.answer
+    assert report.supporting_documents == [document]
+
+
+def test_report_retries_unsupported_numbers_then_fallback_keeps_findings_and_sources() -> None:
+    draft = sample_draft()
+    draft["problem_description"] = "The line logged 999 defects."
+    llm = FakeLLM([json.dumps(draft), json.dumps(draft)])
+    workflow, _, _, _ = build_workflow(llm)
+
+    report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
+
+    assert len(llm.prompts) == 2
+    assert report.key_findings
+    assert "133" in report.answer
+    assert report.supporting_documents[0].id == "complaint:123"
+    assert any("LLM draft could not be validated" in item for item in report.limitations)
+
+
 def test_no_results_are_reported_as_limitations() -> None:
     class EmptyRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[FakeChunk]:
             return []
 
     draft = sample_draft()
+    draft["problem_description"] = "No matching manufacturing rows were found."
     draft["root_cause_hypotheses"] = []
     draft["limitations"] = []
     workflow = InvestigationWorkflow(
@@ -436,7 +520,7 @@ def test_investigate_endpoint_end_to_end_with_fake_agents_and_llm() -> None:
         {"week": "2025-05-05", "defect_count": 42},
         {"week": "2025-05-12", "defect_count": 91},
     ]
-    assert len(body["supporting_data"]) == 4
+    assert len(body["supporting_data"]) == 3
     assert body["supporting_documents"][0]["id"] == "complaint:123"
     assert body["human_review_note"] == "Draft for human review."
 

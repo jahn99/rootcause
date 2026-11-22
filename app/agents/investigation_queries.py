@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date, timedelta
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -97,15 +98,14 @@ def _template_queries(context: dict[str, Any]) -> list[tuple[str, str, dict[str,
     """Build fixed query text and bound parameter dictionaries from triage values."""
     part = context.get("part")
     dates, date_params = _date_filter(context)
+    top_parts_sql = (
+        "SELECT part, COUNT(*) AS defect_count FROM production_defects"
+        + (" WHERE " + " AND ".join(dates) if dates else "")
+        + " GROUP BY part ORDER BY defect_count DESC, part"
+    )
+    top_parts_query = ("top_parts", top_parts_sql, dict(date_params))
     if not part:
-        if not context.get("top_part_query"):
-            return []
-        top_parts_sql = (
-            "SELECT part, COUNT(*) AS defect_count FROM production_defects"
-            + (" WHERE " + " AND ".join(dates) if dates else "")
-            + " GROUP BY part ORDER BY defect_count DESC, part"
-        )
-        return [("top_parts", top_parts_sql, dict(date_params))]
+        return [top_parts_query] if context.get("top_part_query") else []
 
     weekly_filters = ["LOWER(part) = LOWER(:part)"]
     weekly_params: dict[str, Any] = {"part": part, **date_params}
@@ -138,12 +138,24 @@ def _template_queries(context: dict[str, Any]) -> list[tuple[str, str, dict[str,
     average_params = dict(date_params)
 
     downtime_filters: list[str] = []
-    downtime_params: dict[str, Any] = dict(date_params)
+    downtime_params: dict[str, Any] = {}
     for key, column in (("plant", "plant"), ("line", "line")):
         if context.get(key) is not None:
             downtime_filters.append(f"{column} = :{key}")
             downtime_params[key] = context[key]
-    downtime_filters.extend(dates)
+    start_date = context.get("start_date")
+    end_date = context.get("end_date")
+    if start_date and end_date:
+        start_value = date.fromisoformat(str(start_date))
+        end_value = date.fromisoformat(str(end_date))
+        downtime_filters.extend(["date >= :downtime_start", "date <= :downtime_end"])
+        first_week = start_value - timedelta(days=start_value.weekday())
+        last_week = end_value - timedelta(days=end_value.weekday())
+        downtime_params["downtime_start"] = (first_week - timedelta(days=14)).isoformat()
+        downtime_params["downtime_end"] = (last_week + timedelta(days=20)).isoformat()
+    else:
+        downtime_filters.extend(dates)
+        downtime_params.update(date_params)
     downtime_sql = (
         "SELECT DATE_TRUNC('week', date) AS week, SUM(minutes) AS downtime_minutes "
         "FROM downtime_events"
@@ -156,6 +168,7 @@ def _template_queries(context: dict[str, Any]) -> list[tuple[str, str, dict[str,
         ("defects_by_plant_line", count_sql, {"part": part, **date_params}),
         ("severity_comparison", average_sql, average_params),
         ("weekly_downtime", downtime_sql, downtime_params),
+        top_parts_query,
     ]
 
 
