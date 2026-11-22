@@ -12,7 +12,8 @@ from typing import Any, Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.agents.data_agent import DataAgent, DataAgentResult, SQLGenerationError
+from app.agents.data_agent import DataAgent
+from app.agents.investigation_queries import InvestigationQueryResult, InvestigationQueryRunner
 from app.db.knowledge_models import KnowledgeChunk
 from app.llm.base import LLMProvider
 from app.reports.schema import (
@@ -150,18 +151,6 @@ def triage_issue(issue: str) -> TriageContext:
     )
 
 
-def _triaged_question(issue: str, context: TriageContext) -> str:
-    constraints = [
-        f"part={context.part}" if context.part else None,
-        f"plant={context.plant}" if context.plant else None,
-        f"line={context.line}" if context.line is not None else None,
-        f"start_date={context.start_date}" if context.start_date else None,
-        f"end_date={context.end_date}" if context.end_date else None,
-    ]
-    details = ", ".join(item for item in constraints if item) or "no structured filters extracted"
-    return f"Issue: {issue}. Triage filters: {details}. Find relevant defect and downtime evidence."
-
-
 def _retrieval_query(context: TriageContext) -> str:
     """Build a topical retrieval query from extracted issue attributes."""
     terms = PART_RETRIEVAL_TERMS.get(context.part or "", context.part or "automotive defect")
@@ -224,6 +213,19 @@ def _compact_row_value(value: Any) -> Any:
     return value
 
 
+def _trim_query_rows(query_id: str, rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Trim result rows while retaining every maximum week in the defect trend."""
+    if len(rows) <= limit:
+        return rows
+    if query_id == "sql:weekly_defects" and rows:
+        peak = max(float(row.get("defect_count", 0)) for row in rows)
+        peak_rows = [row for row in rows if float(row.get("defect_count", 0)) == peak]
+        other_rows = [row for row in rows if float(row.get("defect_count", 0)) != peak]
+        selected = peak_rows + other_rows[: max(0, limit - len(peak_rows))]
+        return sorted(selected, key=lambda row: str(row.get("week", "")))
+    return rows[:limit]
+
+
 def prepare_report_evidence(
     triage: dict[str, Any],
     sql_data: list[SupportingData],
@@ -239,8 +241,8 @@ def prepare_report_evidence(
             if triage.get(key) is not None
         },
         "sql_results": [
-            {"id": item.id, "rows": item.rows[:20]}
-            for item in sql_data[:3]
+            {"id": item.id, "rows": _trim_query_rows(item.id, item.rows, 20)}
+            for item in sql_data[:4]
         ],
         "documents": [
             {"id": item.id, "snippet": clean_document_snippet(item.snippet, 500)}
@@ -268,7 +270,9 @@ def prepare_report_evidence(
         elif any(len(rowset["rows"]) > 1 for rowset in evidence["sql_results"]):
             for rowset in evidence["sql_results"]:
                 if len(rowset["rows"]) > 1:
-                    rowset["rows"] = rowset["rows"][: max(1, len(rowset["rows"]) - 5)]
+                    rowset["rows"] = _trim_query_rows(
+                        rowset["id"], rowset["rows"], max(1, len(rowset["rows"]) - 5)
+                    )
         elif evidence["limitations"]:
             evidence["limitations"].pop()
         else:
@@ -286,11 +290,22 @@ class InvestigationWorkflow:
         knowledge_retriever: KnowledgeRetriever,
         llm: LLMProvider,
         top_k_documents: int = 4,
+        query_runner: InvestigationQueryRunner | None = None,
     ) -> None:
         self.data_agent = data_agent
         self.knowledge_retriever = knowledge_retriever
         self.llm = llm
         self.top_k_documents = top_k_documents
+        engine = getattr(data_agent, "engine", None)
+        self.query_runner = query_runner or (
+            InvestigationQueryRunner(
+                engine,
+                row_limit=getattr(data_agent, "row_limit", 100),
+                timeout_ms=getattr(data_agent, "timeout_ms", 3000),
+            )
+            if engine is not None
+            else None
+        )
         builder = StateGraph(WorkflowState)
         builder.add_node("triage", self._triage_node)
         builder.add_node("data_agent", self._data_agent_node)
@@ -308,52 +323,52 @@ class InvestigationWorkflow:
         result = await self._graph.ainvoke({"issue": issue})
         return EightDReport.model_validate(result["report"])
 
-    @staticmethod
-    def _triage_node(state: WorkflowState) -> dict[str, Any]:
-        triage = triage_issue(state["issue"]).model_dump(mode="json")
+    async def _triage_node(self, state: WorkflowState) -> dict[str, Any]:
+        context = triage_issue(state["issue"])
+        if context.part and self.query_runner is not None:
+            context.part = self.query_runner.resolve_part(context.part)
+        triage = context.model_dump(mode="json")
         logger.debug("8D triage output: %s", triage)
         return {"triage": triage}
 
     async def _data_agent_node(self, state: WorkflowState) -> dict[str, Any]:
         context = TriageContext.model_validate(state["triage"])
-        questions = [_triaged_question(state["issue"], context)]
-        if context.part and (context.plant is None or context.start_date is None):
-            filters = f"part {context.part}"
-            questions = [
-                f"For {filters}, count defects and calculate average severity grouped by plant and line across the full date range available in the database. Include all dates and order by count descending.",
-                f"For {filters} on line {context.line if context.line is not None else 'all lines'}, show weekly defect counts across the full date range available in the database. Include all dates.",
-                f"Show downtime minutes by plant, line, and reason mentioning {filters} across the full date range available in the database. Include all dates.",
-            ]
+        if context.part is None:
+            return {
+                "supporting_data": [],
+                "data_limitation": "No matching part value was found in the production data.",
+            }
+        if self.query_runner is None:
+            return {
+                "supporting_data": [],
+                "data_limitation": "Fixed investigation SQL is unavailable.",
+            }
 
-        gathered: list[dict[str, Any]] = []
-        limitations: list[str] = []
-        for index, question in enumerate(questions, start=1):
-            try:
-                result: DataAgentResult = await self.data_agent.ask(question)
-            except SQLGenerationError:
-                logger.exception("8D SQL query %d remained invalid after retry", index)
-                raise
-            except Exception:
-                logger.exception("8D SQL overview query %d failed", index)
-                limitations.append(f"SQL overview query {index} could not be completed.")
-                continue
-            if result.refused or result.sql is None:
-                limitations.append(f"SQL overview query {index} was unavailable.")
-                continue
-            logger.debug("8D SQL query %d: %s (row_count=%d)", index, result.sql, len(result.rows))
-            if len(result.rows) > 20:
-                limitations.append(f"SQL overview query {index} was limited to the first 20 rows for the report.")
-            gathered.append(
+        result_rows: list[dict[str, Any]] = []
+        try:
+            results: list[InvestigationQueryResult] = self.query_runner.run_overviews(
+                context.model_dump(mode="json")
+            )
+        except Exception:
+            logger.exception("Fixed investigation SQL failed")
+            raise
+        for result in results:
+            logger.debug(
+                "Investigation SQL %s: %s (row_count=%d)",
+                result.name,
+                result.sql,
+                len(result.rows),
+            )
+            result_rows.append(
                 SupportingData(
-                    id=f"sql:{index}", sql=result.sql, rows=result.rows[:20]
+                    id=f"sql:{result.name}",
+                    sql=result.sql,
+                    parameters=result.parameters,
+                    rows=result.rows,
                 ).model_dump(mode="json")
             )
-            if not result.rows:
-                limitations.append(f"SQL overview query {index} returned no results.")
-
-        if not gathered:
-            limitations.append("No SQL results were available for this issue.")
-        return {"supporting_data": gathered, "data_limitation": " ".join(limitations)}
+        limitation = "" if any(item["rows"] for item in result_rows) else "The fixed investigation queries returned no rows."
+        return {"supporting_data": result_rows, "data_limitation": limitation}
 
     async def _knowledge_agent_node(self, state: WorkflowState) -> dict[str, Any]:
         context = TriageContext.model_validate(state["triage"])
@@ -413,7 +428,7 @@ class InvestigationWorkflow:
             SupportingDocument.model_validate(item)
             for item in state.get("supporting_documents", [])[:4]
         ]
-        raw_sql_data = raw_sql_data[:3]
+        raw_sql_data = raw_sql_data[:4]
         limitations = [
             item
             for item in (state.get("data_limitation", ""), state.get("knowledge_limitation", ""))

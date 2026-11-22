@@ -81,12 +81,18 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def execute_readonly_sql(engine: Engine, query: str, timeout_ms: int) -> list[dict[str, Any]]:
+def execute_readonly_sql(
+    engine: Engine,
+    query: str,
+    timeout_ms: int,
+    parameters: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Run one already-validated SQL statement in a read-only timed transaction."""
     with engine.connect() as connection, connection.begin():
-        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-        connection.exec_driver_sql(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'")
-        result = connection.execute(text(query))
+        if engine.dialect.name == "postgresql":
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            connection.exec_driver_sql(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'")
+        result = connection.execute(text(query), parameters or {})
         return [
             {str(key): _json_safe(value) for key, value in row._mapping.items()}
             for row in result.fetchall()

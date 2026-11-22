@@ -26,6 +26,7 @@ class SupportingData(ReportModel):
 
     id: str
     sql: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
     rows: list[dict[str, Any]]
 
 

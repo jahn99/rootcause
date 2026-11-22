@@ -128,6 +128,16 @@ def test_failing_plant_line_question_sql_passes_validation() -> None:
     assert "LIMIT 100" in validated
 
 
+def test_union_all_remains_blocked_for_free_form_sql_agent() -> None:
+    query = (
+        "SELECT plant FROM production_defects "
+        "UNION ALL SELECT plant FROM downtime_events"
+    )
+
+    with pytest.raises(SQLValidationError, match="Only SELECT statements are allowed"):
+        validate_sql(query)
+
+
 class FakeLLM:
     def __init__(
         self,

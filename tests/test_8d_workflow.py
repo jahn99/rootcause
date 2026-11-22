@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.agents.data_agent import DataAgentResult, SQLGenerationError
+from app.agents.investigation_queries import InvestigationQueryResult
 from app.api.investigate import get_investigation_workflow
 from app.main import app
 from app.reports.schema import EightDReport, SupportingData, SupportingDocument
@@ -30,7 +31,7 @@ def sample_draft() -> dict[str, object]:
             {
                 "hypothesis": "Seal fit variation may be contributing to the reported defects.",
                 "confidence_level": "low",
-                "evidence": ["sql:1", "complaint:123"],
+                "evidence": ["sql:weekly_defects", "complaint:123"],
             }
         ],
         "corrective_actions": ["Verify seal installation settings."],
@@ -44,7 +45,7 @@ def report_payload(**overrides: object) -> dict[str, object]:
         **sample_draft(),
         "supporting_data": [
             {
-                "id": "sql:1",
+                "id": "sql:weekly_defects",
                 "sql": "SELECT COUNT(*) FROM production_defects LIMIT 100",
                 "rows": [{"count": 5}],
             }
@@ -76,6 +77,34 @@ class FakeDataAgent:
             rows=[{"count": 5}],
             answer="Five matching defects were found.",
         )
+
+
+class FakeInvestigationQueryRunner:
+    def __init__(self, empty: bool = False) -> None:
+        self.context: dict[str, object] = {}
+        self.empty = empty
+
+    def resolve_part(self, requested: str) -> str:
+        assert requested == "door seal"
+        return "door seal"
+
+    def run_overviews(self, context: dict[str, object]) -> list[InvestigationQueryResult]:
+        self.context = context
+        rows = [] if self.empty else [{"count": 5}]
+        return [
+            InvestigationQueryResult(
+                name="weekly_defects",
+                sql="SELECT date_trunc('week', date) FROM production_defects WHERE part = %(part)s",
+                parameters={"part": "door seal"},
+                rows=[] if self.empty else [
+                    {"week": "2025-05-05", "defect_count": 42},
+                    {"week": "2025-05-12", "defect_count": 91},
+                ],
+            ),
+            InvestigationQueryResult("defects_by_plant_line", "SELECT plant FROM production_defects", {"part": "door seal"}, rows),
+            InvestigationQueryResult("severity_comparison", "SELECT AVG(severity) FROM production_defects", {"part": "door seal"}, rows),
+            InvestigationQueryResult("weekly_downtime", "SELECT date_trunc('week', date) FROM downtime_events", {}, rows),
+        ]
 
 
 class FakeChunk:
@@ -130,11 +159,17 @@ class FakeLLM:
 
 def build_workflow(
     llm: FakeLLM | None = None,
-) -> tuple[InvestigationWorkflow, FakeDataAgent, FakeRetriever, FakeLLM]:
+) -> tuple[InvestigationWorkflow, FakeInvestigationQueryRunner, FakeRetriever, FakeLLM]:
     data_agent = FakeDataAgent()
+    query_runner = FakeInvestigationQueryRunner()
     retriever = FakeRetriever()
     provider = llm or FakeLLM()
-    return InvestigationWorkflow(data_agent, retriever, provider), data_agent, retriever, provider
+    return (
+        InvestigationWorkflow(data_agent, retriever, provider, query_runner=query_runner),
+        query_runner,
+        retriever,
+        provider,
+    )
 
 
 def test_8d_schema_requires_citations_to_gathered_evidence() -> None:
@@ -177,34 +212,33 @@ def test_triage_extracts_part_line_plant_and_date_range() -> None:
 
 
 def test_workflow_gathers_both_sources_and_uses_only_evidence() -> None:
-    workflow, data_agent, retriever, llm = build_workflow()
+    workflow, query_runner, retriever, llm = build_workflow()
     report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
 
-    assert "part door seal" in data_agent.question
+    assert query_runner.context["part"] == "door seal"
     assert "line 3" in retriever.query
-    assert report.supporting_data[0].id == "sql:1"
+    assert report.supporting_data[0].id == "sql:weekly_defects"
     assert report.supporting_documents[0].id == "complaint:123"
-    assert report.root_cause_hypotheses[0].evidence == ["sql:1", "complaint:123"]
+    assert report.root_cause_hypotheses[0].evidence == ["sql:weekly_defects", "complaint:123"]
     assert "ONLY the gathered evidence" in llm.prompts[0]
     assert "Do not invent causes" in llm.prompts[0]
 
 
 def test_workflow_without_plant_or_dates_runs_part_overviews() -> None:
-    workflow, data_agent, retriever, _ = build_workflow()
+    workflow, query_runner, retriever, _ = build_workflow()
     report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
 
-    assert len(data_agent.questions) == 3
-    assert any("grouped by plant and line" in item for item in data_agent.questions)
-    assert any("weekly defect counts" in item for item in data_agent.questions)
-    assert any("average severity" in item for item in data_agent.questions)
-    assert any("downtime minutes" in item for item in data_agent.questions)
+    assert query_runner.context == {
+        "part": "door seal", "plant": None, "line": 3,
+        "start_date": None, "end_date": None,
+    }
     assert "door seal weatherstrip water leak wind noise" in retriever.query
-    assert len(report.supporting_data) == 3
+    assert len(report.supporting_data) == 4
     assert report.supporting_documents[0].id == "complaint:123"
 
 
 def test_month_only_triage_and_investigation_input() -> None:
-    workflow, data_agent, retriever, _ = build_workflow()
+    workflow, query_runner, retriever, _ = build_workflow()
     issue = "Door-seal defects are spiking on Line 3 at Cedar Falls in May 2025"
     triage = triage_issue(issue)
     report = asyncio.run(workflow.run(issue))
@@ -212,18 +246,13 @@ def test_month_only_triage_and_investigation_input() -> None:
     assert triage.plant == "Cedar Falls"
     assert triage.start_date == date(2025, 5, 1)
     assert triage.end_date == date(2025, 5, 31)
-    assert len(data_agent.questions) >= 1
-    assert "start_date=2025-05-01" in data_agent.question
-    assert "end_date=2025-05-31" in data_agent.question
+    assert query_runner.context["start_date"] == "2025-05-01"
+    assert query_runner.context["end_date"] == "2025-05-31"
     assert "door seal weatherstrip water leak wind noise" in retriever.query
     assert report.supporting_data
 
 
 def test_no_results_are_reported_as_limitations() -> None:
-    class EmptyDataAgent:
-        async def ask(self, question: str) -> DataAgentResult:
-            return DataAgentResult(sql="SELECT COUNT(*) FROM production_defects", rows=[], answer="No records.")
-
     class EmptyRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[FakeChunk]:
             return []
@@ -232,7 +261,10 @@ def test_no_results_are_reported_as_limitations() -> None:
     draft["root_cause_hypotheses"] = []
     draft["limitations"] = []
     workflow = InvestigationWorkflow(
-        EmptyDataAgent(), EmptyRetriever(), FakeLLM([json.dumps(draft)])  # type: ignore[arg-type]
+        FakeDataAgent(),
+        EmptyRetriever(),
+        FakeLLM([json.dumps(draft)]),
+        query_runner=FakeInvestigationQueryRunner(empty=True),
     )
     report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
 
@@ -269,13 +301,29 @@ def test_oversized_evidence_is_compacted_to_token_budget() -> None:
 
     assert token_count == estimate_tokens(evidence)
     assert token_count <= REPORT_EVIDENCE_TOKEN_BUDGET
-    assert len(evidence["sql_results"]) <= 3
+    assert len(evidence["sql_results"]) <= 4
     assert all(len(item["rows"]) <= 20 for item in evidence["sql_results"])
     assert len(evidence["documents"]) <= 4
     assert all(len(item["snippet"]) <= 500 for item in evidence["documents"])
     assert "source_type" not in evidence["documents"][0]
     assert "date" not in evidence["documents"][0]
     assert "unused" not in evidence["triage"]
+
+
+def test_weekly_trend_compaction_keeps_peak_week() -> None:
+    weekly_rows = [
+        {"week": f"2025-{index:02d}-01", "defect_count": index}
+        for index in range(1, 27)
+    ]
+    weekly = SupportingData(
+        id="sql:weekly_defects", sql="SELECT ...", rows=weekly_rows
+    )
+
+    evidence, _ = prepare_report_evidence({}, [weekly], [], [], token_budget=300)
+
+    retained = evidence["sql_results"][0]["rows"]
+    assert len(retained) == 20
+    assert {item["defect_count"] for item in retained} >= {26}
 
 
 def test_report_validation_retries_once_then_returns_validated_report(
@@ -315,7 +363,11 @@ def test_investigate_endpoint_end_to_end_with_fake_agents_and_llm() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["problem_description"] == "Door-seal defects increased on Line 3."
-    assert body["supporting_data"][0]["rows"] == [{"count": 5}]
+    assert body["supporting_data"][0]["rows"] == [
+        {"week": "2025-05-05", "defect_count": 42},
+        {"week": "2025-05-12", "defect_count": 91},
+    ]
+    assert len(body["supporting_data"]) == 4
     assert body["supporting_documents"][0]["id"] == "complaint:123"
     assert body["human_review_note"] == "Draft for human review."
 
