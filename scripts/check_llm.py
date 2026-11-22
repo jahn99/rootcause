@@ -1,8 +1,14 @@
 """Send a short prompt through the configured application LLM provider."""
 
 import asyncio
+import sys
+from pathlib import Path
 
-from app.llm.factory import create_llm_provider
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.llm.factory import create_llm_provider  # noqa: E402
 
 
 def friendly_error(error: Exception) -> str:

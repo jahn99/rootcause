@@ -1,9 +1,14 @@
 """Fetch, chunk, embed, and store a bounded NHTSA sample."""
 
 from pathlib import Path
+import sys
 
-from app.ingestion.nhtsa import fetch_nhtsa_records
-from app.ingestion.store import ingest_records
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.ingestion.nhtsa import fetch_nhtsa_records  # noqa: E402
+from app.ingestion.store import ingest_records  # noqa: E402
 
 DATA_DIR = Path("data")
 CACHE_DIR = DATA_DIR / "nhtsa_cache"

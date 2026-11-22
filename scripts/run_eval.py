@@ -5,21 +5,26 @@ from __future__ import annotations
 import json
 import argparse
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi.testclient import TestClient
-
-from app.api.ask import get_retriever
-from app.config import get_settings
-from app.db.session import create_database_engine
-from app.main import app
-from app.retrieval.search import HybridRetriever
-from eval.scoring import combined_score, keyword_score, safety_score, sql_number_match
-from sqlalchemy.exc import SQLAlchemyError
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
+
+from app.api.ask import get_retriever  # noqa: E402
+from app.config import get_settings  # noqa: E402
+from app.db.session import create_database_engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.retrieval.search import HybridRetriever  # noqa: E402
+from eval.scoring import combined_score, keyword_score, safety_score, sql_number_match  # noqa: E402
+
 QUESTION_PATH = ROOT / "eval" / "questions.json"
 RESULT_PATH = ROOT / "eval" / "results.json"
 RETRIEVAL_MODES = ("vector", "bm25", "hybrid")

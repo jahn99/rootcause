@@ -72,7 +72,7 @@ def test_eval_records_question_errors_continues_and_counts_failures(monkeypatch,
     def request(_client, question, mode="hybrid"):
         calls.append(question["id"])
         if question["id"] == "Q1":
-            raise RuntimeError("provider failed with gsk_SUPER_SECRET_VALUE")
+            raise RuntimeError("provider failed with fake-key-marker")
         checkpoint = json.loads(result_path.content)
         assert checkpoint["results"][0]["status"] == "error"
         return {"answer": "I refuse."}
@@ -83,7 +83,7 @@ def test_eval_records_question_errors_continues_and_counts_failures(monkeypatch,
     results = json.loads(result_path.content)
     assert calls == ["Q1", "Q2"]
     assert [row["status"] for row in results["results"]] == ["error", "completed"]
-    assert "gsk_SUPER_SECRET_VALUE" not in json.dumps(results)
+    assert "fake-key-marker" not in json.dumps(results)
     assert results["summary"]["error_count"] == 1
     assert results["summary"]["failure_count"] == 1
 

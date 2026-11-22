@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import random
+import sys
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, delete
 from sqlalchemy.orm import Session
 
-from app.db.models import Base, DowntimeEvent, ProductionDefect
-from app.db.readonly_role import ensure_readonly_role
-from app.db.session import create_database_engine
-from app.config import get_settings
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.config import get_settings  # noqa: E402
+from app.db.models import Base, DowntimeEvent, ProductionDefect  # noqa: E402
+from app.db.readonly_role import ensure_readonly_role  # noqa: E402
+from app.db.session import create_database_engine  # noqa: E402
 
 SEED = 2025
 START_DATE = date(2025, 1, 1)

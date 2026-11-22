@@ -25,6 +25,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      PYTHONPATH: ${{ github.workspace }}
       DATABASE_URL: postgresql+psycopg://rootcause:rootcause@127.0.0.1:5432/rootcause
       ROOTCAUSE_TEST_ADMIN_DATABASE_URL: postgresql+psycopg://rootcause:rootcause@127.0.0.1:5432/rootcause
       ROOTCAUSE_TEST_READONLY_DATABASE_URL: postgresql+psycopg://rootcause_readonly:rootcause_readonly@127.0.0.1:5432/rootcause

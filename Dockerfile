@@ -3,6 +3,12 @@ FROM python:3.11-slim
 WORKDIR /app
 ENV PYTHONPATH=/app
 
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir --upgrade setuptools==84.2.1 wheel==0.46.3
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
