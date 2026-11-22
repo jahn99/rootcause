@@ -205,3 +205,17 @@ API credentials through this repository.
 python -m pytest -q
 ruff check .
 ```
+
+## Screenshots
+
+![8D report](docs/screenshots/report.png)
+The report view summarizes key findings, actions, and supporting evidence.
+
+![Evidence chart](docs/screenshots/evidence.png)
+The evidence view plots weekly defect counts and highlights spike weeks.
+
+![Refused SQL request](docs/screenshots/refused.png)
+The SQL agent clearly marks a write request as refused.
+
+![API documentation](docs/screenshots/api-docs.png)
+FastAPI documentation lists the available API operations and responses.

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -94,6 +94,45 @@ function BulletList({ items, empty = "Not available" }) {
   );
 }
 
+function topPartsScope(report) {
+  const evidence = list(report?.supporting_data).find(
+    (item) => isRecord(item) && item.id === "sql:top_parts",
+  );
+  if (!evidence || typeof evidence.sql !== "string") return null;
+
+  const parameters = isRecord(evidence.parameters) ? evidence.parameters : {};
+  const startDate = typeof parameters.start_date === "string" ? parameters.start_date : null;
+  const endDate = typeof parameters.end_date === "string" ? parameters.end_date : null;
+  const hasDateFilter = /\bdate\s*(?:>=|<=|>|<|between\b)/i.test(evidence.sql);
+  if (hasDateFilter && startDate && endDate) return `${startDate} to ${endDate}`;
+  if (hasDateFilter && startDate) return `from ${startDate} onward`;
+  if (hasDateFilter && endDate) return `through ${endDate}`;
+
+  const hasNoFilters =
+    !/\bwhere\b/i.test(evidence.sql) &&
+    /\bfrom\s+production_defects\b/i.test(evidence.sql) &&
+    Object.keys(parameters).length === 0;
+  return hasNoFilters ? "all dates" : null;
+}
+
+function KeyFindings({ items, report }) {
+  const values = list(items).filter((item) => typeof item === "string" && item.trim());
+  const scope = topPartsScope(report);
+  if (!values.length) return <p className="muted">Not available</p>;
+  return (
+    <ul className="bullet-list">
+      {values.map((item, index) => (
+        <li key={`${index}-${item}`}>
+          {item}
+          {scope && item.startsWith("Top part by defect count:") && (
+            <span className="finding-scope">Scope: {scope}</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ReportView({ report }) {
   if (!report) {
     return <EmptyState title="No report yet" description="Run an investigation to create an evidence-linked 8D draft." />;
@@ -104,7 +143,7 @@ function ReportView({ report }) {
   return (
     <div className="view-stack">
       <Panel title="Key findings" eyebrow="Evidence summary" className="accent-panel">
-        <BulletList items={report.key_findings} empty="Not available" />
+        <KeyFindings items={report.key_findings} report={report} />
       </Panel>
 
       <div className="report-grid">
@@ -335,12 +374,35 @@ function ReviewView({ report, decision, setDecision, comment, setComment }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("Investigate");
+  const [apiStatus, setApiStatus] = useState("checking");
   const [issue, setIssue] = useState("");
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [decision, setDecision] = useState("");
   const [comment, setComment] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkApi() {
+      try {
+        const response = await fetch(`${API_BASE}/health`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error("Health request failed");
+        const payload = await response.json();
+        if (payload?.status !== "ok") throw new Error("Unexpected health response");
+        if (!cancelled) setApiStatus("connected");
+      } catch {
+        if (!cancelled) setApiStatus("failed");
+      }
+    }
+
+    checkApi();
+    return () => { cancelled = true; };
+  }, []);
 
   async function investigate(event) {
     event.preventDefault();
@@ -372,7 +434,15 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-spacer" />
-        <div className="sidebar-connection"><span className="connection-dot" /><div><strong>API connection</strong><small>{API_BASE}</small></div></div>
+        <div className="sidebar-connection" role="status" aria-live="polite">
+          <span className={`connection-dot connection-dot-${apiStatus}`} />
+          <div>
+            <strong className={`connection-text-${apiStatus}`}>
+              {apiStatus === "connected" ? "Connected" : apiStatus === "failed" ? "Not connected" : "Checking…"}
+            </strong>
+            <small>{API_BASE}</small>
+          </div>
+        </div>
         <div className="sidebar-foot">DEMO WORKSPACE <span>·</span> v1.0</div>
       </aside>
 
