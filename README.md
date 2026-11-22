@@ -190,6 +190,14 @@ are claimed here; fill in this table from the generated `eval/results.json`.
   correctness comprehensively.
 - Reports are drafts and need human review. The claim verifier does not verify
   causal reasoning.
+- The claim verifier checks numbers and cited document IDs only. Most claims
+  in an 8D draft are non-numeric and show as `not_checkable`.
+- The LLM draft can overclaim: a root-cause hypothesis can be given high
+  confidence on thin evidence, and the verifier does not check causal reasoning
+  or confidence levels.
+- Retrieval can return loosely related public documents, for example a
+  wind-noise complaint for a water-leak question.
+- Every draft needs human review.
 
 ## Claim verifier
 
@@ -223,6 +231,9 @@ The evidence view plots weekly defect counts and highlights spike weeks.
 
 ![Refused SQL request](docs/screenshots/refused.png)
 The SQL agent clearly marks a write request as refused.
+
+![Claim verification](docs/screenshots/verification.png)
+Rule-based claim verification on an investigation report
 
 ![API documentation](docs/screenshots/api-docs.png)
 FastAPI documentation lists the available API operations and responses.
