@@ -4,7 +4,7 @@
     "category": "doc",
     "question": "What are the most common causes of door seal failures reported by vehicle owners?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["seal", "water", "leak"]
     }
   },
   {
@@ -12,7 +12,7 @@
     "category": "doc",
     "question": "Which NHTSA recalls involve brake system parts?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["brake"]
     }
   },
   {
@@ -20,7 +20,7 @@
     "category": "doc",
     "question": "What complaints describe water leaking into the vehicle cabin?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["water", "leak"]
     }
   },
   {
@@ -28,7 +28,7 @@
     "category": "doc",
     "question": "What issues have been reported with airbag inflators?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["airbag", "inflator"]
     }
   },
   {
@@ -36,7 +36,7 @@
     "category": "doc",
     "question": "Which recalls mention fuel leaks and potential fire hazards?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["fuel", "leak", "fire"]
     }
   },
   {
@@ -44,7 +44,7 @@
     "category": "doc",
     "question": "Which recalls involve electrical wiring defects or short circuits?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["wiring", "short"]
     }
   },
   {
@@ -52,7 +52,7 @@
     "category": "doc",
     "question": "What seat belt part failures have been reported?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["seat belt"]
     }
   },
   {
@@ -114,7 +114,7 @@
     "category": "combined",
     "question": "How severe was the increase in door-seal defects on Cedar Falls, Line 3, between 5 and 18 May 2025, and what causes of similar failures are reported in NHTSA complaints?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["seal", "133"]
     }
   },
   {
@@ -122,7 +122,7 @@
     "category": "combined",
     "question": "Which part had the highest production defect count across all plants and lines during 2025, and are there related NHTSA recalls?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["door seal", "recall"]
     }
   },
   {
@@ -130,7 +130,7 @@
     "category": "combined",
     "question": "Did the door-seal defect spike at Cedar Falls, Line 3, between 5 and 18 May 2025, correspond with increased downtime, and are similar failures documented in public complaints?",
     "check": {
-      "expected_keywords": []
+      "expected_keywords": ["downtime", "seal"]
     }
   },
   {
