@@ -12,6 +12,7 @@ services:
       FASTEMBED_CACHE_PATH: /app/data/fastembed_cache
     volumes:
       - ./data:/app/data
+      - ./eval:/app/eval
     depends_on:
       db:
         condition: service_healthy

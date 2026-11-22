@@ -1,6 +1,7 @@
 """Basic API and provider factory checks."""
 
 from pathlib import Path
+import importlib
 
 from fastapi.testclient import TestClient
 
@@ -16,6 +17,24 @@ def test_docker_image_exposes_app_package_on_python_path() -> None:
 
     assert "ENV PYTHONPATH=/app" in dockerfile.read_text(encoding="utf-8")
     assert "PYTHONPATH: /app" in compose_file.read_text(encoding="utf-8")
+
+
+def test_docker_includes_eval_and_mounts_host_results() -> None:
+    project_root = Path(__file__).parents[1]
+    dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
+    compose = (project_root / "docker-compose.yml").read_text(encoding="utf-8")
+    dockerignore = (project_root / ".dockerignore").read_text(encoding="utf-8")
+
+    assert "COPY eval ./eval" in dockerfile
+    assert "./eval:/app/eval" in compose
+    assert not any(line.strip() in {"eval", "eval/", "**/eval"} for line in dockerignore.splitlines())
+
+
+def test_evaluation_runner_imports() -> None:
+    module = importlib.import_module("scripts.run_eval")
+
+    assert module.QUESTION_PATH.name == "questions.json"
+    assert module.RESULT_PATH.name == "results.json"
 
 
 def test_health_returns_ok() -> None:
