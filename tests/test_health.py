@@ -44,6 +44,37 @@ def test_health_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_cors_allows_the_configured_dashboard_origin_only() -> None:
+    allowed = TestClient(app).options(
+        "/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    rejected = TestClient(app).options(
+        "/health",
+        headers={
+            "Origin": "http://localhost:5174",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert "access-control-allow-origin" not in rejected.headers
+
+
+def test_cors_origin_list_can_be_configured_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("CORS_ORIGINS", "https://quality.example, http://localhost:5173")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.allowed_cors_origins == [
+        "https://quality.example",
+        "http://localhost:5173",
+    ]
+
+
 def test_factory_selects_groq_provider() -> None:
     provider = create_llm_provider(Settings(llm_provider="groq", groq_api_key="test-key"))
 

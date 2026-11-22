@@ -10,7 +10,9 @@ material.
 
 ```mermaid
 flowchart LR
-    User --> API[FastAPI]
+    User --> Dashboard[React dashboard<br/>Vite + Tailwind]
+    Dashboard --> API[FastAPI]
+    User --> API
     API --> Ask[POST /ask]
     API --> SQL[POST /sql-agent]
     API --> Investigate[POST /investigate]
@@ -32,6 +34,11 @@ flowchart LR
         Quality
     end
 ```
+
+The dashboard runs locally outside Docker. It calls the API at
+`http://localhost:8000`; FastAPI allows browser requests from
+`http://localhost:5173` by default. Set `CORS_ORIGINS` to a comma-separated
+allow-list if the dashboard runs from a different origin.
 
 ## Setup and run (PowerShell)
 
@@ -76,6 +83,25 @@ Check that the API is running:
 ```powershell
 Invoke-RestMethod http://localhost:8000/health
 ```
+
+### Run the dashboard
+
+In another PowerShell window, install and start the frontend development
+server:
+
+```powershell
+Set-Location frontend
+npm install
+npm run dev
+```
+
+Open <http://localhost:5173>. Set `VITE_API_BASE_URL` in
+`frontend/.env.local` if the API is not at `http://localhost:8000`. See
+[frontend/README.md](frontend/README.md) for the frontend build command and
+details. The **Review** tab stores its approve/reject choice only in browser
+memory; it is a human-in-the-loop demo and does not update backend records.
+
+_Screenshot placeholder: add a dashboard screenshot here._
 
 Example requests:
 

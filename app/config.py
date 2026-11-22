@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     sql_agent_timeout_ms: int = 3000
     retrieval_mode: str = "hybrid"
     retrieval_top_k: int = 5
+    cors_origins: str = "http://localhost:5173"
+
+    @property
+    def allowed_cors_origins(self) -> list[str]:
+        """Return the configured browser origins as a trimmed allow-list."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

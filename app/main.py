@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.api.ask import router as ask_router
@@ -8,6 +9,12 @@ from app.api.sql_agent import router as sql_agent_router
 from app.api.investigate import router as investigate_router
 
 app = FastAPI(title=get_settings().app_name)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().allowed_cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 app.include_router(ask_router)
 app.include_router(sql_agent_router)
 app.include_router(investigate_router)
