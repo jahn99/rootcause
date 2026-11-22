@@ -18,7 +18,6 @@ VEHICLES = (
     ("FORD", "F-150"),
     ("TOYOTA", "CAMRY"),
     ("HONDA", "ACCORD"),
-    ("MERCEDES-BENZ", "C-CLASS"),
 )
 TOPIC_TERMS = (
     "door", "seal", "brake", "airbag", "air bag", "fuel", "steer",

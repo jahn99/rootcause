@@ -1,6 +1,10 @@
 """Regression tests for door-seal-focused NHTSA ingestion topics."""
 
-from app.ingestion.nhtsa import normalize_records
+from app.ingestion.nhtsa import VEHICLES, normalize_records
+
+
+def test_ingestion_vehicle_sample_excludes_mercedes_benz() -> None:
+    assert all(make != "MERCEDES-BENZ" for make, _ in VEHICLES)
 
 
 def test_normalizer_keeps_door_seal_related_complaint_topics() -> None:

@@ -6,8 +6,6 @@ import logging
 import math
 import time
 from collections import deque
-from typing import Any
-
 from groq import APIStatusError, AsyncGroq
 
 from app.config import Settings

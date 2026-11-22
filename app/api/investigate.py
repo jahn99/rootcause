@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.agents.data_agent import DataAgent, SQLGenerationError
+from app.agents.data_agent import SQLGenerationError
 from app.api.ask import get_retriever
 from app.api.sql_agent import get_data_agent
 from app.llm.factory import create_llm_provider

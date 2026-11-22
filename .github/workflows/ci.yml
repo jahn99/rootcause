@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality-and-image:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: rootcause
+          POSTGRES_USER: rootcause
+          POSTGRES_PASSWORD: rootcause
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rootcause -d rootcause"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://rootcause:rootcause@127.0.0.1:5432/rootcause
+      ROOTCAUSE_TEST_ADMIN_DATABASE_URL: postgresql+psycopg://rootcause:rootcause@127.0.0.1:5432/rootcause
+      ROOTCAUSE_TEST_READONLY_DATABASE_URL: postgresql+psycopg://rootcause_readonly:rootcause_readonly@127.0.0.1:5432/rootcause
+      READONLY_DB_PASSWORD: rootcause_readonly
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project and quality tools
+        run: python -m pip install -r requirements.txt ruff pip-audit
+
+      - name: Lint with Ruff
+        run: ruff check .
+
+      - name: Create synthetic Postgres tables for role integration test
+        run: python scripts/generate_data.py
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Audit Python dependencies
+        run: pip-audit -r requirements.txt
+
+      - name: Scan repository for secrets
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: docker build --tag rootcause:ci .
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: rootcause:ci
+          scan-type: image
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "1"
