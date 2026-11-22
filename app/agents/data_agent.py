@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -13,7 +14,7 @@ from sqlalchemy import Engine, inspect, text
 
 from app.db.readonly_role import ALLOWED_TABLES, READONLY_ROLE
 from app.llm.base import LLMProvider
-from app.agents.sql_validator import validate_sql
+from app.agents.sql_validator import SQLValidationError, validate_sql
 
 SQL_OUTPUT_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -21,6 +22,7 @@ SQL_OUTPUT_SCHEMA: dict[str, object] = {
     "required": ["sql"],
     "additionalProperties": False,
 }
+logger = logging.getLogger(__name__)
 
 
 class GeneratedSQL(BaseModel):
@@ -40,6 +42,10 @@ class DataAgentResult(BaseModel):
 
 class UnsafeQuestion(ValueError):
     """Raised only by the intent check for modifying or credential requests."""
+
+
+class SQLGenerationError(ValueError):
+    """Raised when generated SQL remains invalid after its single retry."""
 
 
 def refusal_reason(question: str) -> str | None:
@@ -124,13 +130,40 @@ class DataAgent:
             "Return only an object with a single string property named sql.\n\n"
             f"Schema:\n{schema}\n\nQuestion: {question}"
         )
-        raw = await self.llm.generate_json(generation_prompt, SQL_OUTPUT_SCHEMA)
-        try:
-            generated = GeneratedSQL.model_validate(json.loads(raw))
-        except (json.JSONDecodeError, ValidationError) as error:
-            raise ValueError("The SQL agent could not produce a valid SQL query.") from error
+        validation_error: Exception | None = None
+        safe_sql: str | None = None
+        raw = ""
+        for attempt in range(2):
+            prompt = generation_prompt
+            if validation_error is not None:
+                prompt += (
+                    f"\n\nThe previous output failed validation: {validation_error}. "
+                    "Return a corrected complete JSON object with a valid SELECT query."
+                )
+            raw = await self.llm.generate_json(
+                prompt, SQL_OUTPUT_SCHEMA, max_output_tokens=600
+            )
+            try:
+                generated = GeneratedSQL.model_validate(json.loads(raw))
+                safe_sql = validate_sql(generated.sql, row_limit=self.row_limit)
+                break
+            except (json.JSONDecodeError, ValidationError, SQLValidationError) as error:
+                validation_error = error
+                logger.warning(
+                    "SQL generation validation failed (attempt %d); finish_reason=%s raw_output=%r error=%s",
+                    attempt + 1,
+                    getattr(self.llm, "last_finish_reason", None),
+                    getattr(self.llm, "last_raw_output", None)
+                    if getattr(self.llm, "last_raw_output", None) is not None
+                    else raw,
+                    error,
+                )
+        if safe_sql is None:
+            raise SQLGenerationError(
+                "The SQL agent could not produce a valid query after one retry. "
+                "Check the question and try again."
+            ) from validation_error
 
-        safe_sql = validate_sql(generated.sql, row_limit=self.row_limit)
         rows = execute_readonly_sql(self.engine, safe_sql, timeout_ms=self.timeout_ms)
         answer_prompt = (
             "Answer the user's database question in one short plain-language sentence. "

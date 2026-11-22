@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.agents.data_agent import DataAgent
+from app.agents.data_agent import DataAgent, SQLGenerationError
 from app.api.ask import get_retriever
 from app.api.sql_agent import get_data_agent
 from app.llm.factory import create_llm_provider
@@ -48,6 +48,8 @@ async def investigate(
     try:
         return await workflow.run(request.issue)
     except ReportValidationError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except SQLGenerationError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except GroqRequestTooLargeError as error:
         logger.warning("Groq rejected report evidence after compaction")

@@ -12,7 +12,7 @@ from typing import Any, Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.agents.data_agent import DataAgent, DataAgentResult
+from app.agents.data_agent import DataAgent, DataAgentResult, SQLGenerationError
 from app.db.knowledge_models import KnowledgeChunk
 from app.llm.base import LLMProvider
 from app.reports.schema import (
@@ -330,6 +330,9 @@ class InvestigationWorkflow:
         for index, question in enumerate(questions, start=1):
             try:
                 result: DataAgentResult = await self.data_agent.ask(question)
+            except SQLGenerationError:
+                logger.exception("8D SQL query %d remained invalid after retry", index)
+                raise
             except Exception:
                 logger.exception("8D SQL overview query %d failed", index)
                 limitations.append(f"SQL overview query {index} could not be completed.")
@@ -462,7 +465,9 @@ class InvestigationWorkflow:
                     estimate_tokens(prompt) + estimate_tokens(REPORT_DRAFT_SCHEMA),
                     evidence_tokens,
                 )
-                raw = await self.llm.generate_json(prompt, REPORT_DRAFT_SCHEMA)
+                raw = await self.llm.generate_json(
+                    prompt, REPORT_DRAFT_SCHEMA, max_output_tokens=1800
+                )
                 draft = ReportDraft.model_validate_json(raw)
                 report_fields = draft.model_dump()
                 combined_limitations = list(dict.fromkeys(draft.limitations + limitations))
@@ -489,6 +494,15 @@ class InvestigationWorkflow:
                 return {"report": report.model_dump(mode="json")}
             except (ValueError, ValidationError) as error:
                 validation_error = str(error)
+                logger.warning(
+                    "Report JSON validation failed (attempt %d); finish_reason=%s raw_output=%r error=%s",
+                    attempt + 1,
+                    getattr(self.llm, "last_finish_reason", None),
+                    getattr(self.llm, "last_raw_output", None)
+                    if getattr(self.llm, "last_raw_output", None) is not None
+                    else raw,
+                    error,
+                )
 
         raise ReportValidationError(
             "The 8D report did not pass validation after one retry. Please try again."

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.agents.data_agent import DataAgentResult
+from app.agents.data_agent import DataAgentResult, SQLGenerationError
 from app.api.investigate import get_investigation_workflow
 from app.main import app
 from app.reports.schema import EightDReport, SupportingData, SupportingDocument
@@ -112,11 +112,17 @@ class FakeLLM:
     def __init__(self, responses: list[str] | None = None) -> None:
         self.responses = responses or [json.dumps(sample_draft())]
         self.prompts: list[str] = []
+        self.last_raw_output: str | None = None
+        self.last_finish_reason: str | None = "stop"
 
-    async def generate_json(self, prompt: str, schema: dict[str, object]) -> str:
+    async def generate_json(
+        self, prompt: str, schema: dict[str, object], *, max_output_tokens: int = 600
+    ) -> str:
         self.prompts.append(prompt)
+        assert max_output_tokens == 1800
         assert schema["type"] == "object"
-        return self.responses.pop(0)
+        self.last_raw_output = self.responses.pop(0)
+        return self.last_raw_output
 
     async def generate(self, prompt: str) -> str:
         raise AssertionError("The report workflow should use structured JSON output only")
@@ -272,8 +278,10 @@ def test_oversized_evidence_is_compacted_to_token_budget() -> None:
     assert "unused" not in evidence["triage"]
 
 
-def test_report_validation_retries_once_then_returns_validated_report() -> None:
-    llm = FakeLLM(responses=["{}", json.dumps(sample_draft())])
+def test_report_validation_retries_once_then_returns_validated_report(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    llm = FakeLLM(responses=["", json.dumps(sample_draft())])
     workflow, _, _, _ = build_workflow(llm)
 
     report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
@@ -281,6 +289,8 @@ def test_report_validation_retries_once_then_returns_validated_report() -> None:
     assert report.problem_description
     assert len(llm.prompts) == 2
     assert "failed validation" in llm.prompts[1]
+    assert "finish_reason=stop" in caplog.text
+    assert "raw_output=''" in caplog.text
 
 
 def test_report_validation_stops_after_one_retry() -> None:
@@ -344,3 +354,20 @@ def test_investigate_provider_context_error_returns_clear_json() -> None:
 
     assert response.status_code == 502
     assert "could not process the report context" in response.json()["detail"]
+
+
+def test_investigate_sql_retry_exhaustion_returns_clear_json() -> None:
+    class InvalidSQLWorkflow:
+        async def run(self, issue: str) -> EightDReport:
+            raise SQLGenerationError("The SQL agent could not produce a valid query after one retry.")
+
+    app.dependency_overrides[get_investigation_workflow] = lambda: InvalidSQLWorkflow()
+    try:
+        response = TestClient(app).post(
+            "/investigate", json={"issue": "Door-seal defects are spiking on Line 3"}
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 502
+    assert response.json()["detail"].endswith("after one retry.")

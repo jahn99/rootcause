@@ -45,8 +45,16 @@ class _LazyLLMProvider(LLMProvider):
     async def generate(self, prompt: str) -> str:
         return await self._get_provider().generate(prompt)
 
-    async def generate_json(self, prompt: str, schema: dict[str, object]) -> str:
-        return await self._get_provider().generate_json(prompt, schema)
+    async def generate_json(
+        self,
+        prompt: str,
+        schema: dict[str, object],
+        *,
+        max_output_tokens: int = 600,
+    ) -> str:
+        return await self._get_provider().generate_json(
+            prompt, schema, max_output_tokens=max_output_tokens
+        )
 
 
 @lru_cache(maxsize=1)

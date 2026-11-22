@@ -129,15 +129,32 @@ def test_failing_plant_line_question_sql_passes_validation() -> None:
 
 
 class FakeLLM:
-    def __init__(self, generated_sql: str = "SELECT COUNT(*) AS count FROM production_defects") -> None:
+    def __init__(
+        self,
+        generated_sql: str = "SELECT COUNT(*) AS count FROM production_defects",
+        responses: list[str] | None = None,
+    ) -> None:
         self.generated_sql = generated_sql
+        self.responses = responses
         self.json_prompt = ""
+        self.json_prompts: list[str] = []
         self.answer_prompt = ""
+        self.last_raw_output: str | None = None
+        self.last_finish_reason: str | None = "stop"
 
-    async def generate_json(self, prompt: str, schema: dict[str, object]) -> str:
+    async def generate_json(
+        self, prompt: str, schema: dict[str, object], *, max_output_tokens: int = 600
+    ) -> str:
         self.json_prompt = prompt
+        self.json_prompts.append(prompt)
+        assert max_output_tokens == 600
         assert schema["required"] == ["sql"]
-        return json.dumps({"sql": self.generated_sql})
+        self.last_raw_output = (
+            self.responses.pop(0)
+            if self.responses
+            else json.dumps({"sql": self.generated_sql})
+        )
+        return self.last_raw_output
 
     async def generate(self, prompt: str) -> str:
         self.answer_prompt = prompt
@@ -160,6 +177,44 @@ def test_data_agent_generates_validates_executes_and_summarizes(monkeypatch: pyt
     assert result.answer == "There are 12 defects."
     assert "approved schema" in llm.json_prompt
     assert "12" in llm.answer_prompt
+    engine.dispose()
+
+
+def test_data_agent_retries_empty_json_then_executes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(data_agent_module, "get_table_schema", lambda _engine: "approved schema")
+    monkeypatch.setattr(
+        data_agent_module,
+        "execute_readonly_sql",
+        lambda _engine, query, timeout_ms: [{"count": 12}],
+    )
+    llm = FakeLLM(responses=["", json.dumps({"sql": "SELECT COUNT(*) AS count FROM production_defects"})])
+    engine = create_engine("postgresql+psycopg://rootcause_readonly:test@localhost/rootcause")
+
+    result = asyncio.run(DataAgent(llm, engine, row_limit=20).ask("How many defects exist?"))
+
+    assert result.rows == [{"count": 12}]
+    assert len(llm.json_prompts) == 2
+    assert "previous output failed validation" in llm.json_prompts[1]
+    engine.dispose()
+
+
+def test_data_agent_retries_truncated_sql_and_fails_clearly_after_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(data_agent_module, "get_table_schema", lambda _engine: "approved schema")
+    truncated_sql = json.dumps({"sql": "SELECT * FROM"})
+    llm = FakeLLM(responses=[truncated_sql, truncated_sql])
+    engine = create_engine("postgresql+psycopg://rootcause_readonly:test@localhost/rootcause")
+
+    with pytest.raises(ValueError, match="after one retry"):
+        asyncio.run(DataAgent(llm, engine).ask("How many defects exist?"))
+
+    assert len(llm.json_prompts) == 2
+    assert "previous output failed validation" in llm.json_prompts[1]
+    assert "SQL could not be parsed" in caplog.text
+    assert "finish_reason=stop" in caplog.text
+    assert "SELECT * FROM" in caplog.text
     engine.dispose()
 
 
