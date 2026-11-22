@@ -104,6 +104,100 @@ class ReportValidationError(ValueError):
     """Raised when the report remains invalid after one retry."""
 
 
+REPORT_LIST_LIMITS = {
+    "containment_actions": (3, 200),
+    "corrective_actions": (3, 200),
+    "preventive_actions": (3, 200),
+    "limitations": (5, 200),
+}
+
+
+def normalize_report_payload(payload: Any) -> dict[str, Any]:
+    """Repair common list-formatting noise before validating a report draft."""
+    if not isinstance(payload, dict):
+        raise ValueError("The report JSON must be an object")
+    normalized = dict(payload)
+
+    def text_items(value: Any, field_name: str, max_item_length: int) -> list[str]:
+        items: list[str] = []
+
+        def collect(item: Any) -> None:
+            if isinstance(item, str):
+                cleaned = item.strip().strip("\\\"' ")
+                folded = cleaned.casefold()
+                if not cleaned or folded in {field_name, ":", "-", "none", "null"}:
+                    return
+                if cleaned.endswith(":") and cleaned[:-1].casefold() == field_name:
+                    return
+                items.append(cleaned[:max_item_length])
+            elif isinstance(item, (list, tuple)):
+                for child in item:
+                    collect(child)
+            elif isinstance(item, dict):
+                for child in item.values():
+                    collect(child)
+
+        collect(value)
+        unique: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            marker = item.casefold()
+            if marker not in seen:
+                seen.add(marker)
+                unique.append(item)
+        max_items = REPORT_LIST_LIMITS.get(field_name, (4, max_item_length))[0]
+        return unique[:max_items]
+
+    for field_name, (_, max_item_length) in REPORT_LIST_LIMITS.items():
+        if field_name in normalized:
+            normalized[field_name] = text_items(
+                normalized[field_name], field_name, max_item_length
+            )
+
+    hypotheses = normalized.get("root_cause_hypotheses")
+    if isinstance(hypotheses, list):
+        cleaned_hypotheses: list[dict[str, Any]] = []
+        seen_hypotheses: set[str] = set()
+        for item in hypotheses:
+            if not isinstance(item, dict):
+                continue
+            hypothesis = str(item.get("hypothesis", "")).strip()
+            evidence = text_items(item.get("evidence", []), "evidence", 120)[:4]
+            if not hypothesis or not evidence or hypothesis.casefold() in seen_hypotheses:
+                continue
+            seen_hypotheses.add(hypothesis.casefold())
+            cleaned_hypotheses.append(
+                {**item, "hypothesis": hypothesis[:240], "evidence": evidence}
+            )
+        normalized["root_cause_hypotheses"] = cleaned_hypotheses[:3]
+    return normalized
+
+
+def deterministic_fallback_report(
+    issue: str,
+    supporting_data: list[SupportingData],
+    supporting_documents: list[SupportingDocument],
+    limitations: list[str],
+) -> EightDReport:
+    """Build a conservative report from gathered evidence after invalid LLM JSON."""
+    fallback_limitations = [
+        "The LLM draft could not be validated after one retry; a deterministic fallback was used.",
+        "insufficient evidence to confirm a root cause without a validated evidence-linked draft.",
+        *limitations,
+    ]
+    return EightDReport(
+        problem_description=issue.strip()[:350] or "An issue was submitted for investigation.",
+        containment_actions=["Review the affected output and contain suspected parts pending human review."],
+        root_cause_hypotheses=[],
+        corrective_actions=["Review the gathered SQL results and public documents before selecting corrective action."],
+        preventive_actions=["Confirm corrective actions with a human reviewer before standardizing them."],
+        limitations=list(dict.fromkeys(item[:200] for item in fallback_limitations))[:5],
+        supporting_data=supporting_data,
+        supporting_documents=supporting_documents,
+        human_review_note="Draft for human review.",
+    )
+
+
 def _parse_date(raw: str) -> date | None:
     for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y"):
         try:
@@ -483,7 +577,8 @@ class InvestigationWorkflow:
                 raw = await self.llm.generate_json(
                     prompt, REPORT_DRAFT_SCHEMA, max_output_tokens=1800
                 )
-                draft = ReportDraft.model_validate_json(raw)
+                payload = normalize_report_payload(json.loads(raw))
+                draft = ReportDraft.model_validate(payload)
                 report_fields = draft.model_dump()
                 combined_limitations = list(dict.fromkeys(draft.limitations + limitations))
                 combined_limitations = [item[:200] for item in combined_limitations]
@@ -519,6 +614,10 @@ class InvestigationWorkflow:
                     error,
                 )
 
-        raise ReportValidationError(
-            "The 8D report did not pass validation after one retry. Please try again."
+        logger.warning(
+            "Report validation retries exhausted; returning deterministic fallback from gathered evidence"
         )
+        fallback = deterministic_fallback_report(
+            state["issue"], sql_data, documents, limitations
+        )
+        return {"report": fallback.model_dump(mode="json")}

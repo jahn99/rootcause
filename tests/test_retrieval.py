@@ -97,3 +97,22 @@ def test_ask_says_not_found_when_retrieval_is_empty() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"answer": "not found in the documents", "sources": []}
+
+
+def test_ask_does_not_guess_internal_root_cause_information() -> None:
+    class MustNotRetrieve:
+        def retrieve(self, query: str, top_k: int = 5) -> list[object]:
+            raise AssertionError("Unavailable internal information must short-circuit retrieval")
+
+    app.dependency_overrides[get_retriever] = MustNotRetrieve
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLM()
+    try:
+        response = TestClient(app).post(
+            "/ask",
+            json={"question": "What is Mercedes-Benz's internal root cause analysis for door-seal failures?"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"answer": "not found in the documents", "sources": []}

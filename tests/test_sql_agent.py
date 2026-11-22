@@ -99,6 +99,15 @@ def test_validator_allows_safe_aggregate_and_date_queries(query: str) -> None:
     assert validate_sql(query)
 
 
+def test_validator_allows_case_expressions_without_allowing_case_as_a_function() -> None:
+    query = (
+        "SELECT CASE WHEN severity >= 4 THEN 'high' ELSE 'other' END AS severity_group "
+        "FROM production_defects"
+    )
+
+    assert "CASE WHEN" in validate_sql(query)
+
+
 @pytest.mark.parametrize(
     ("function", "query"),
     [
@@ -272,4 +281,61 @@ def test_sql_agent_endpoint_returns_sql_rows_and_answer() -> None:
         "rows": [{"count": 12}],
         "answer": "There are 12 defects.",
         "refused": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        (
+            "What is the defect rate at the Stuttgart manufacturing plant?",
+            "No data found for Stuttgart.",
+        ),
+        ("How many defects are on Line 7?", "No data found for Line 7."),
+    ],
+)
+def test_sql_agent_returns_no_data_for_unknown_location_without_generating_sql(
+    monkeypatch: pytest.MonkeyPatch, question: str, expected: str
+) -> None:
+    monkeypatch.setattr(data_agent_module, "get_distinct_values", lambda _engine, column: {
+        "plant": {"Cedar Falls", "Lakeview", "Pine Ridge"},
+        "line": {1, 2, 3, 4},
+    }[column])
+    monkeypatch.setattr(
+        data_agent_module,
+        "get_table_schema",
+        lambda _engine: (_ for _ in ()).throw(AssertionError("SQL generation should be skipped")),
+    )
+    llm = FakeLLM()
+    engine = create_engine("postgresql+psycopg://rootcause_readonly:test@localhost/rootcause")
+    agent = DataAgent(llm, engine)
+
+    result = asyncio.run(agent.ask(question))
+
+    assert result.answer == expected
+    assert result.sql is None
+    assert result.rows == []
+    assert llm.json_prompt == ""
+    engine.dispose()
+
+
+def test_sql_agent_returns_clean_json_for_database_errors() -> None:
+    from sqlalchemy.exc import OperationalError
+
+    class BrokenAgent:
+        async def ask(self, question: str) -> DataAgentResult:
+            raise OperationalError("SELECT 1 / 0", {}, RuntimeError("division by zero"))
+
+    app.dependency_overrides[get_data_agent] = lambda: BrokenAgent()
+    try:
+        response = TestClient(app).post("/sql-agent", json={"question": "What happened?"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sql": None,
+        "rows": [],
+        "answer": "The database could not complete that read request. No results were returned.",
+        "refused": True,
     }

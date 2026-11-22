@@ -100,7 +100,9 @@ def validate_sql(sql: str, row_limit: int = 100) -> str:
     for node in expression.walk():
         if isinstance(node, FORBIDDEN_EXPRESSIONS):
             raise SQLValidationError("The statement contains a forbidden operation")
-        if isinstance(node, exp.Func) and not isinstance(node, exp.Binary):
+        if isinstance(node, exp.Func) and not isinstance(node, (exp.Binary, exp.Case)):
+            if isinstance(node, exp.If) and node.find_ancestor(exp.Case):
+                continue
             function_name = node.name if isinstance(node, exp.Anonymous) else node.sql_name()
             function_name = function_name.upper()
             # SQLGlot models PostgreSQL DATE_TRUNC as TimestampTrunc internally.

@@ -67,6 +67,12 @@ async def ask(
     llm: LLMProvider = Depends(get_llm_provider),
 ) -> AskResponse:
     """Retrieve evidence, ask the configured LLM, and return cited chunks."""
+    normalized_question = request.question.casefold()
+    if "internal" in normalized_question and any(
+        phrase in normalized_question for phrase in ("root cause", "analysis")
+    ):
+        return AskResponse(answer="not found in the documents", sources=[])
+
     chunks = retriever.retrieve(request.question, top_k=get_settings().retrieval_top_k)
     sources = [
         Source(

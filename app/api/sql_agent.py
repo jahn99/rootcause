@@ -5,6 +5,8 @@ from functools import lru_cache
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine
+from sqlalchemy.exc import SQLAlchemyError
+import logging
 
 from app.agents.data_agent import DataAgent, DataAgentResult
 from app.agents.sql_validator import SQLValidationError
@@ -14,6 +16,7 @@ from app.llm.base import LLMProvider
 from app.llm.factory import create_llm_provider
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class SQLAgentRequest(BaseModel):
@@ -82,6 +85,14 @@ async def sql_agent(
     """Answer a question from the allow-listed manufacturing tables."""
     try:
         result: DataAgentResult = await agent.ask(request.question)
+    except SQLAlchemyError:
+        logger.exception("Read-only SQL agent database operation failed")
+        return SQLAgentResponse(
+            sql=None,
+            rows=[],
+            answer="The database could not complete that read request. No results were returned.",
+            refused=True,
+        )
     except SQLValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except ValueError as error:

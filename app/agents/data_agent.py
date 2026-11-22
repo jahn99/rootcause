@@ -10,9 +10,10 @@ from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import Engine, inspect, text
+from sqlalchemy import Engine, inspect, select, text
 
 from app.db.readonly_role import ALLOWED_TABLES, READONLY_ROLE
+from app.db.models import ProductionDefect
 from app.llm.base import LLMProvider
 from app.agents.sql_validator import SQLValidationError, validate_sql
 
@@ -46,6 +47,39 @@ class UnsafeQuestion(ValueError):
 
 class SQLGenerationError(ValueError):
     """Raised when generated SQL remains invalid after its single retry."""
+
+
+def get_distinct_values(engine: Engine, column_name: str) -> set[str | int]:
+    """Fetch values from a fixed allow-list of real manufacturing columns."""
+    columns = {"plant": ProductionDefect.plant, "line": ProductionDefect.line}
+    if column_name not in columns:
+        raise ValueError("Only plant and line values can be checked")
+    with engine.connect() as connection, connection.begin():
+        if engine.dialect.name == "postgresql":
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+        values = connection.execute(select(columns[column_name]).distinct()).scalars()
+        return set(values)
+
+
+def _unknown_location(question: str, engine: Engine) -> str | None:
+    """Return a mentioned plant or line that is absent from production data."""
+    line_match = re.search(r"\bline\s*(\d+)\b", question, flags=re.IGNORECASE)
+    if line_match:
+        line = int(line_match.group(1))
+        if line not in get_distinct_values(engine, "line"):
+            return f"Line {line}"
+
+    plant_match = re.search(
+        r"\b(?:at\s+(?:the\s+)?|in\s+(?:the\s+)?)([A-Z][a-z]+(?:[ -][A-Z][a-z]+){0,2})",
+        question,
+    )
+    if plant_match:
+        candidate = plant_match.group(1).strip(" ,-.")
+        if candidate.casefold() not in {"may", "june", "july", "august", "september", "october", "november", "december", "january", "february", "march", "april"}:
+            plants = {str(value).casefold() for value in get_distinct_values(engine, "plant")}
+            if candidate.casefold() not in plants:
+                return candidate
+    return None
 
 
 def refusal_reason(question: str) -> str | None:
@@ -125,6 +159,15 @@ class DataAgent:
                 rows=[],
                 answer="Sorry, I can’t modify database records or disclose credentials.",
                 refused=True,
+            )
+
+        unknown_location = _unknown_location(question, self.engine)
+        if unknown_location:
+            return DataAgentResult(
+                sql=None,
+                rows=[],
+                answer=f"No data found for {unknown_location}.",
+                refused=False,
             )
 
         schema = get_table_schema(self.engine)

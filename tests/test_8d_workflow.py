@@ -16,8 +16,8 @@ from app.reports.schema import EightDReport, SupportingData, SupportingDocument
 from app.reports.workflow import (
     REPORT_EVIDENCE_TOKEN_BUDGET,
     InvestigationWorkflow,
-    ReportValidationError,
     estimate_tokens,
+    normalize_report_payload,
     prepare_report_evidence,
     triage_issue,
 )
@@ -345,9 +345,44 @@ def test_report_validation_stops_after_one_retry() -> None:
     llm = FakeLLM(responses=["{}", "{}"])
     workflow, _, _, _ = build_workflow(llm)
 
-    with pytest.raises(ReportValidationError, match="after one retry"):
-        asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
+    report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
+
     assert len(llm.prompts) == 2
+    assert report.supporting_data
+    assert report.supporting_documents
+    assert report.root_cause_hypotheses == []
+    assert any("LLM draft could not be validated" in item for item in report.limitations)
+    assert any("insufficient evidence" in item for item in report.limitations)
+
+
+def test_report_list_normalization_repairs_noise_and_bounds_items() -> None:
+    payload = sample_draft()
+    payload["preventive_actions"] = [
+        "preventive_actions",
+        ":",
+        ["  Monitor the trend.  ", "", "Monitor the trend."],
+        "x" * 250,
+        "discard after maximum length",
+    ]
+
+    normalized = normalize_report_payload(payload)
+
+    assert normalized["preventive_actions"] == [
+        "Monitor the trend.",
+        "x" * 200,
+        "discard after maximum length",
+    ]
+
+
+def test_report_workflow_accepts_normalized_lists_before_validation() -> None:
+    draft = sample_draft()
+    draft["preventive_actions"] = ["preventive_actions", ":", ["Monitor the trend.", ""]]
+    workflow, _, _, llm = build_workflow(FakeLLM(responses=[json.dumps(draft)]))
+
+    report = asyncio.run(workflow.run("Door-seal defects are spiking on Line 3"))
+
+    assert report.preventive_actions == ["Monitor the trend."]
+    assert len(llm.prompts) == 1
 
 
 def test_investigate_endpoint_end_to_end_with_fake_agents_and_llm() -> None:
